@@ -1,2 +1,3 @@
-# Y
-A Distributed Twitter Clone with Network Analysis Layer (CN Semester Project).
+# Lambda (λ)
+
+A Custom Reverse Proxy with Real-Time Packet Capture and Traffic Analysis.
