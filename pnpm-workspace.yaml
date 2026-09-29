@@ -1,0 +1,6 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'stress-test'
+allowBuilds:
+  '@audc/pcap': true

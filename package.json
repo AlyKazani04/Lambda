@@ -1,0 +1,23 @@
+{
+  "name": "Lambda",
+  "version": "1.0.0",
+  "description": "A Custom Reverse Proxy with Real-Time Packet Capture and Traffic Analysis",
+  "main": "index.js",
+  "scripts": {
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:logs": "docker compose logs -f",
+    "smoke": "pnpm --filter ./apps/proxy smoke"
+  },
+  "author": "AlyKazani04",
+  "license": "MIT",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.6.0",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.6.0",
+  "type": "module"
+}

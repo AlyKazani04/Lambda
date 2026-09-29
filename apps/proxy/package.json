@@ -1,0 +1,15 @@
+{
+  "name": "proxy",
+  "version": "1.0.0",
+  "description": "L7 Reverse Proxy/Monitoring for the API",
+  "main": "index.js",
+  "scripts": {
+    "smoke": "tsx src/smoke.ts"
+  },
+  "author": "AlyKazani04",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@audc/pcap": "^4.2.0"
+  }
+}
