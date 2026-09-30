@@ -2,9 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # No branch filter: CI should run on every branch push, not just main.
+    # Feature branches need feedback before they are ever merged, and with only
+    # two of us working we want to know a push is broken immediately.
+    branches: ['**']
   pull_request:
-    branches: [main]
+    branches: ['**']
 
 # Cancel superseded runs on the same branch — saves runner minutes while
 # both of us push to the same repo.
@@ -17,11 +20,11 @@ jobs:
     name: Lint, typecheck, build, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
@@ -58,9 +61,9 @@ jobs:
     # if you want it as a hard gate.
     if: ${{ hashFiles('apps/proxy/Dockerfile') != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'

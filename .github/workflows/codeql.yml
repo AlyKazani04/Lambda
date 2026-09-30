@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
   # The weekly run matters more than the per-PR run: a fresh checkout with no
   # new code gives CodeQL nothing new to learn, so scheduled runs are where it
   # actually surfaces findings.
@@ -20,11 +19,11 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
@@ -32,13 +31,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # JavaScript/TypeScript is a BUILD-LESS language for CodeQL — it parses
+      # the source directly, so there is no compile step to trace. Do NOT set
+      # `build-mode`; the default (`none`) is the only mode it supports.
+      # Setting `build-mode: manual` fails at database init with:
+      #   "JavaScript/TypeScript does not support the manual build mode."
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
-          # Autobuild only understands some build systems; for a pnpm/TS
-          # monorepo, building each workspace explicitly is more reliable.
-          build-mode: manual
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
