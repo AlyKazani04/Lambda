@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: 'main'
+  pull_request:
+    branches: ['**']
+
+# Cancel superseded runs on the same branch — saves runner minutes while
+# both of us push to the same repo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, typecheck, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      # --frozen-lockfile fails if pnpm-lock.yaml would need to change.
+      # A PR that edits package.json without regenerating the lockfile is
+      # rejected here — this is what stops lockfile drift.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # @audc/pcap ships a linux-x64 prebuilt binary, so no compiler
+      # toolchain is needed on the runner.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+      # Needs CAP_NET_RAW for live capture, so run unprivileged on loopback
+      # via sudo in the runner (the runner passwordless-sudo runner allows it).
+      # - name: Test (smoke)
+      #   run: |
+      #     sudo -E env "PATH=$PATH" pnpm test

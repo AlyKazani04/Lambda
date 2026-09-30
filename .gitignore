@@ -1,0 +1,25 @@
+node_modules
+
+.env
+
+*.pcap
+
+captures/
+
+dist/
+
+# Next.js
+.next/
+out/
+
+# Logs & coverage
+*.log
+npm-debug.log*
+pnpm-debug.log*
+coverage/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
