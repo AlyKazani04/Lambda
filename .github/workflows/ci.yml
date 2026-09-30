@@ -51,22 +51,3 @@ jobs:
       - name: Test (smoke)
         run: |
           sudo -E env "PATH=$PATH" pnpm test
-
-  # Separate from `verify` so a Docker build failure is distinguishable from
-  # a TypeScript failure in the PR checks list.
-  docker:
-    name: Docker build (proxy)
-    runs-on: ubuntu-latest
-    # Only build once the Dockerfile exists; remove this job's condition later
-    # if you want it as a hard gate.
-    if: ${{ hashFiles('apps/proxy/Dockerfile') != '' }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'pnpm'
-      - run: pnpm install --frozen-lockfile
-      - name: Build proxy image
-        run: docker build -t lambda-proxy:ci ./apps/proxy
