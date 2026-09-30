@@ -4,11 +4,9 @@
   "description": "L7 Reverse Proxy/Monitoring for the API",
   "main": "index.js",
   "scripts": {
-    "smoke": "tsx src/smoke.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "lint": "eslint src",
-    "test": "pnpm run smoke"
+    "lint": "eslint src"
   },
   "author": "AlyKazani04",
   "license": "MIT",

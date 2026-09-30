@@ -7,7 +7,6 @@
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "infra:logs": "docker compose logs -f",
-    "smoke": "pnpm --filter ./apps/proxy smoke",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",

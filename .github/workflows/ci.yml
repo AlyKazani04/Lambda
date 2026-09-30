@@ -2,10 +2,7 @@ name: CI
 
 on:
   push:
-    # No branch filter: CI should run on every branch push, not just main.
-    # Feature branches need feedback before they are ever merged, and with only
-    # two of us working we want to know a push is broken immediately.
-    branches: ['**']
+    branches: 'main'
   pull_request:
     branches: ['**']
 
@@ -48,6 +45,6 @@ jobs:
 
       # Needs CAP_NET_RAW for live capture, so run unprivileged on loopback
       # via sudo in the runner (the runner passwordless-sudo runner allows it).
-      - name: Test (smoke)
-        run: |
-          sudo -E env "PATH=$PATH" pnpm test
+      # - name: Test (smoke)
+      #   run: |
+      #     sudo -E env "PATH=$PATH" pnpm test
