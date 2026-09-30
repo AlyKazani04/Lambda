@@ -4,3 +4,4 @@ packages:
   - 'stress-test'
 allowBuilds:
   '@audc/pcap': true
+  esbuild: true

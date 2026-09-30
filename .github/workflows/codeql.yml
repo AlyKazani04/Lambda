@@ -1,0 +1,44 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # The weekly run matters more than the per-PR run: a fresh checkout with no
+  # new code gives CodeQL nothing new to learn, so scheduled runs are where it
+  # actually surfaces findings.
+  schedule:
+    - cron: '27 4 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # Autobuild only understands some build systems; for a pnpm/TS
+          # monorepo, building each workspace explicitly is more reliable.
+          build-mode: manual
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3

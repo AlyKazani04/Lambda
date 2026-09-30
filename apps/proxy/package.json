@@ -4,12 +4,21 @@
   "description": "L7 Reverse Proxy/Monitoring for the API",
   "main": "index.js",
   "scripts": {
-    "smoke": "tsx src/smoke.ts"
+    "smoke": "tsx src/smoke.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "lint": "eslint src",
+    "test": "pnpm run smoke"
   },
   "author": "AlyKazani04",
   "license": "MIT",
   "type": "module",
   "dependencies": {
     "@audc/pcap": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   }
 }
