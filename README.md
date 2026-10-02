@@ -15,6 +15,34 @@ pnpm install
 cp .env.example .env
 ```
 
+### Docker access
+
+```bash
+sudo docker compose up -d      # not: pnpm infra:up
+```
+
+`pnpm infra:up` currently runs `docker compose` without `sudo` and will fail
+with `permission denied ... /var/run/docker.sock`. Prefix with `sudo` for now,
+or update the script once you decide which way to go.
+
+## Environment
+
+`.env` holds machine-specific config. Two values matter most:
+
+| Variable          | Notes                                                                                                                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CAPTURE_IFACE`   | **Must be the physical NIC, never `lo`.** A container's loopback is namespace-isolated and sees no host traffic — capture goes silent in a way that looks identical to a broken parser |
+| `PROXY_PORT` etc. | Change only if a port is genuinely taken                                                                                                                                               |
+
+Redis is reached over the compose network and is **not** published to the host
+or LAN. It has no authentication and no TLS, so keep it that way.
+
+## Storage
+
+There is no database in v1. Recent history lives in a capped Redis list —
+`LPUSH frames <json>` followed by `LTRIM frames 0 <HISTORY_LIMIT>` — which
+cannot grow without bound. Postgres was cut deliberately; see issue #5.
+
 ## Repository layout
 
 ```text
@@ -30,13 +58,13 @@ tools/         capture-check, netem, parser validation
 
 ## Commands
 
-| Command                        | Purpose                        |
-| ------------------------------ | ------------------------------ |
-| `pnpm install`                 | Install workspace dependencies |
-| `pnpm typecheck`               | Typecheck all packages         |
-| `pnpm build`                   | Build all packages             |
-| `pnpm lint`                    | Lint all packages              |
-| `pnpm infra:up` / `infra:down` | Start/stop Docker services     |
+| Command                        | Purpose                                                   |
+| ------------------------------ | --------------------------------------------------------- |
+| `pnpm install`                 | Install workspace dependencies                            |
+| `pnpm typecheck`               | Typecheck all packages                                    |
+| `pnpm build`                   | Build all packages                                        |
+| `pnpm lint`                    | Lint all packages                                         |
+| `pnpm infra:up` / `infra:down` | Start/stop Docker services (**needs `sudo`** — see above) |
 
 ## Continuous integration
 
