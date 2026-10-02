@@ -1,0 +1,36 @@
+# Build context for BOTH the proxy and stub images is the repo root, so this
+# file must live at the root — Docker only honours .dockerignore at the root of
+# the build context, not inside subdirectories.
+
+# Keep the build context small and stop host artifacts leaking into images.
+node_modules
+**/node_modules
+
+# Secrets: .env holds machine-specific config and must never enter a layer.
+.env
+.env.*
+!.env.example
+
+# VCS and tooling metadata
+.git
+.github
+.gitignore
+
+# Build output — regenerated inside the image.
+dist
+**/dist
+.next
+out
+
+# Captures are large, binary, and regenerable.
+*.pcap
+captures/
+
+# Editor / OS / logs
+.vscode
+.idea
+*.swp
+.DS_Store
+*.log
+coverage
+*.tsbuildinfo

@@ -43,8 +43,108 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      # Needs CAP_NET_RAW for live capture, so run unprivileged on loopback
-      # via sudo in the runner (the runner passwordless-sudo runner allows it).
-      # - name: Test (smoke)
-      #   run: |
-      #     sudo -E env "PATH=$PATH" pnpm test
+      # Live pcap capture needs CAP_NET_RAW and access to a host interface,
+      # which GitHub-hosted runners do not grant to unprivileged containers.
+      # So this stays off until there is a suite that needs no real capture:
+      # unit tests over the packet parser, the RTT estimator, and sequence
+      # reassembly (issues #21, #24, #26). Those are pure functions over known
+      # inputs, need no privileges, and are where the real test value is
+      # anyway — B5 in particular needs hand-computed expected values.
+      #
+      # Note `pnpm test` currently has no test files; the script exists so
+      # this step has something to invoke once there are tests.
+      # - name: Test (unit)
+      #   run: pnpm test
+
+  # Builds both images and runs the stack briefly. This is the only check that
+  # can catch Dockerfile and compose errors — the TypeScript job above is
+  # blind to them, which is how a musl/glibc mismatch, a missing pnpm
+  # install, or a wrong build context reaches main unnoticed.
+  #
+  # Separate job so a Docker failure is attributable at a glance instead of
+  # buried in lint output.
+  docker:
+    name: Docker (build + smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # compose references env_file: .env, which is gitignored and so absent
+      # on a fresh checkout. MUST come before any `docker compose` command:
+      # compose resolves env_file eagerly and aborts if the file is missing —
+      # including for `config`, which never starts a container. Doing this
+      # after the validate step fails the job before it ever gets here.
+      - name: Prepare .env
+        run: cp .env.example .env
+
+      # Cheapest validation of the compose file: catches indentation and
+      # schema errors in seconds, before spending minutes on a build that was
+      # never going to start. This is the check that catches the mistake where
+      # a top-level key lands inside `services:` and gets parsed as a service
+      # named after the key.
+      - name: Validate compose file
+        run: docker compose config --quiet
+
+      # No BuildKit cache on purpose: the cache key would key on the lockfile
+      # and Dockerfile, and at this size the rebuild is cheaper than the cache
+      # round-trip. Revisit if the dependency tree grows.
+      - name: Build images
+        run: docker compose build
+
+      # Exercises what unit tests never touch: healthcheck definitions,
+      # depends_on: service_healthy ordering, env_file injection, CMD, and the
+      # USER node drop.
+      - name: Start stack
+        run: docker compose up -d --wait --wait-timeout 90
+
+      - name: Smoke test services
+        run: |
+          set -euo pipefail
+          for port in 8080 3001; do
+            for attempt in $(seq 1 15); do
+              if curl -fsS "http://127.0.0.1:${port}/health"; then
+                echo " <- :${port} ok"
+                break
+              fi
+              if [ "$attempt" -eq 15 ]; then
+                echo "service on :${port} never became healthy" >&2
+                exit 1
+              fi
+              sleep 2
+            done
+          done
+
+      # NET_ADMIN is granted via cap_add, not by running as root. Assert that
+      # explicitly: a container that silently reverted to root would still
+      # serve /health perfectly, so this cannot be inferred from a 200.
+      - name: Assert container drops root
+        run: |
+          set -euo pipefail
+          uid=$(docker compose exec -T proxy id -u)
+          if [ "$uid" = "0" ]; then
+            echo "proxy container is running as root (uid 0); USER node is not taking effect" >&2
+            exit 1
+          fi
+          echo "proxy runs as uid ${uid} (not root)"
+
+      # libpcap must be present in the runtime image, not only the builder. A
+      # missing .so otherwise surfaces as an opaque load error inside
+      # @audc/pcap in week 2, which is the worst place to find it.
+      - name: Assert libpcap present in runtime image
+        run: |
+          set -euo pipefail
+          if ! docker compose exec -T proxy sh -c 'ldconfig -p | grep -q pcap'; then
+            echo "libpcap not found in runtime image" >&2
+            exit 1
+          fi
+          echo "libpcap present"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 100
+
+      # Always tears down, including on failure — otherwise a failed run leaves
+      # containers behind and the next one behaves confusingly.
+      - name: Tear down
+        if: always()
+        run: docker compose down -v --remove-orphans
