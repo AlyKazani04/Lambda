@@ -68,14 +68,39 @@ tools/         capture-check, netem, parser validation
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every PR to `main`: typecheck, build and lint. `.github/workflows/codeql.yml` runs CodeQL security scanning
-(daily PR + weekly).
+`.github/workflows/ci.yml` runs on every PR to `main` in two jobs:
+
+- **`verify`** — typecheck, build and lint.
+- **`docker`** — `docker compose config`, builds both images, starts the stack,
+  asserts `/health` on the proxy and stub, asserts the proxy container runs as
+  non-root, and asserts libpcap is present in the runtime image.
+
+The `docker` job exists because the TypeScript job is blind to container
+problems. A musl/glibc mismatch, a missing `pnpm` install, or a build context
+that cannot reach `pnpm-lock.yaml` all build fine locally on the right
+hardware and only fail in the image — so without it, those reach `main`
+unnoticed.
+
+`.github/workflows/codeql.yml` runs CodeQL security scanning (daily PR +
+weekly).
+
+Two things CI deliberately does **not** do:
+
+- **Live pcap capture.** Needs `CAP_NET_RAW` and a host interface, which
+  GitHub-hosted runners do not grant. The `test` step stays commented until
+  there are unit tests that need no privileges — the packet parser, RTT
+  estimator and reassembly buffer are pure functions over known inputs, and
+  those are where the test value is anyway.
+- **Port-forwarded or `NET_ADMIN` behaviour checks beyond the smoke test.**
+  The `NET_ADMIN` grant is asserted by capability, not by running `tc`.
 
 `pnpm install --frozen-lockfile` in CI means **a PR that edits `package.json`
 without regenerating `pnpm-lock.yaml` will fail.** Run `pnpm install` and commit
 the lockfile alongside dependency changes.
 
-Branch protection on `main` is required — see the project notes.
+One gotcha worth knowing: a workspace package with **zero dependencies** gets
+no `importers[...]` entry in the lockfile, which then fails
+`--frozen-lockfile`. Every workspace package needs at least one devDependency.
 
 ## Dependency notes
 
