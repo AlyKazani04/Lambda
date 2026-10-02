@@ -69,6 +69,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # compose references env_file: .env, which is gitignored and so absent
+      # on a fresh checkout. MUST come before any `docker compose` command:
+      # compose resolves env_file eagerly and aborts if the file is missing —
+      # including for `config`, which never starts a container. Doing this
+      # after the validate step fails the job before it ever gets here.
+      - name: Prepare .env
+        run: cp .env.example .env
+
       # Cheapest validation of the compose file: catches indentation and
       # schema errors in seconds, before spending minutes on a build that was
       # never going to start. This is the check that catches the mistake where
@@ -76,11 +84,6 @@ jobs:
       # named after the key.
       - name: Validate compose file
         run: docker compose config --quiet
-
-      # compose references env_file: .env, which is gitignored and so absent
-      # on a fresh checkout. Generate it so `up` has what it expects.
-      - name: Prepare .env
-        run: cp .env.example .env
 
       # No BuildKit cache on purpose: the cache key would key on the lockfile
       # and Dockerfile, and at this size the rebuild is cheaper than the cache
