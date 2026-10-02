@@ -1,0 +1,61 @@
+# Postgres was cut from v1 — the capped Redis list (LPUSH + LTRIM 0 10000)
+# covers history. See issue #5.
+
+services:
+  proxy:
+    # Context is the repo root: pnpm needs pnpm-workspace.yaml, pnpm-lock.yaml
+    # and the root package.json to resolve the workspace. A context of
+    # apps/proxy leaves the lockfile outside the build entirely.
+    build:
+      context: .
+      dockerfile: apps/proxy/Dockerfile
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+    # NET_ADMIN grants network administration (interface config, tc traffic
+    # control) for netem and capture. Does NOT make the container root — the
+    # image drops to USER node.
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      # Bound to loopback only. Laptop B reaches the proxy over a Tailscale
+      # tunnel rather than a LAN port-forward (see issue #12 / risk table).
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  redis:
+    image: redis:7
+    # expose, not ports: reachable from the compose network, NOT published to
+    # the host or LAN. Redis has no auth and no TLS by default — keep it here.
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  stub:
+    build:
+      context: .
+      dockerfile: apps/stub/Dockerfile
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
