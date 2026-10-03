@@ -33,6 +33,23 @@ const MAX_DELAY_MS = 30_000;
 /** Same ceiling for ?n= on the chunked endpoint: each chunk is one timer. */
 const MAX_CHUNKS = 512;
 
+// Endpoint contract, for whoever writes the load generator (#9 / F4):
+//
+//   /api/status          rotating 200/201/400/401/404/429/500, in order
+//   /api/small           ~1 KB JSON
+//   /api/large           ~100 KB JSON
+//   /api/slow?ms=N       delay N ms        (clamped to 30000)
+//   /api/reset           socket destroyed mid-response -> RST
+//   /api/close           Connection: close -> extra handshakes
+//   /api/chunked?n=N     N chunks, ~5ms apart (n clamped to 512)
+//   /api/burst           plain 200; burst rate is the generator's job
+//   /timeline/*          ~1 KB JSON
+//
+// Any of these can be overridden per request with ?behaviour=<name>, which is
+// how the generator drives a weighted distribution. Values outside the clamps
+// are corrected and logged rather than rejected, so a misconfigured scenario
+// shows up in the stub log instead of failing a whole load run.
+
 /** Delay between streamed chunks. Without it the kernel coalesces the whole
  * body into one segment and there is nothing for B7 to reassemble. */
 const CHUNK_GAP_MS = 5;
