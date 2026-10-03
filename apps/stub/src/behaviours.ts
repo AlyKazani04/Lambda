@@ -20,35 +20,65 @@ export const SMALL_BYTES = 1024;
 export const LARGE_BYTES = 100 * 1024;
 
 /**
- * Ceiling on any caller-supplied delay or count.
- *
- * `?ms=999999999` would otherwise pin a socket open indefinitely, and the load
- * generator drives these endpoints in the thousands — unbounded timers are a
- * resource-exhaustion vector (CodeQL js/resource-exhaustion flags the unclamped
- * form). 30s is far beyond any latency worth plotting against a P99 target of
- * 200ms, and still lets a request terminate on its own.
+ * Chunk counts the stub will actually stream. Fixed set for the same reason as
+ * ALLOWED_DELAYS_MS: one timer per chunk, so the count must not be arbitrary.
+ * 500 is well past anything useful for demonstrating multi-segment frames.
  */
-const MAX_DELAY_MS = 30_000;
+const ALLOWED_CHUNKS: ReadonlyArray<number> = [2, 3, 5, 8, 10, 16, 32, 64, 128, 256, 500];
 
-/** Same ceiling for ?n= on the chunked endpoint: each chunk is one timer. */
-const MAX_CHUNKS = 512;
+/**
+ * The only delays this service will ever hold a socket open for.
+ *
+ * `?ms=` is caller-controlled and reaches `setTimeout`, so an arbitrary value
+ * is a resource-exhaustion vector: `?ms=999999999` would pin the socket open
+ * indefinitely, and the load generator drives this endpoint in the thousands
+ * (CodeQL js/resource-exhaustion).
+ *
+ * Snapping to an allowlist rather than clamping with `Math.min` is deliberate.
+ * A clamp still derives the duration from user input, so the flow reaches
+ * `setTimeout` and the alert stays open; selecting from a fixed set means the
+ * value cannot be user-controlled at all. It is also the better behaviour for
+ * the load generator — a P99 is only comparable across runs if every run draws
+ * from the same set of latencies.
+ */
+const ALLOWED_DELAYS_MS: ReadonlyArray<number> = [
+  0, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000,
+];
+
+/** Nearest allowed delay. Always a member of ALLOWED_DELAYS_MS. */
+export function resolveDelay(ms: number): number {
+  let nearest = ALLOWED_DELAYS_MS[0] ?? 0;
+  if (!Number.isFinite(ms) || ms < 0) {
+    return nearest;
+  }
+  for (const candidate of ALLOWED_DELAYS_MS) {
+    if (Math.abs(candidate - ms) < Math.abs(nearest - ms)) {
+      nearest = candidate;
+    }
+  }
+  return nearest;
+}
 
 // Endpoint contract, for whoever writes the load generator (#9 / F4):
 //
 //   /api/status          rotating 200/201/400/401/404/429/500, in order
 //   /api/small           ~1 KB JSON
 //   /api/large           ~100 KB JSON
-//   /api/slow?ms=N       delay N ms        (clamped to 30000)
+//   /api/slow?ms=N       delay N ms, snapped to a fixed set (0..5000)
 //   /api/reset           socket destroyed mid-response -> RST
 //   /api/close           Connection: close -> extra handshakes
-//   /api/chunked?n=N     N chunks, ~5ms apart (n clamped to 512)
+//   /api/chunked?n=N     N chunks ~5ms apart, snapped to a fixed set
 //   /api/burst           plain 200; burst rate is the generator's job
 //   /timeline/*          ~1 KB JSON
 //
 // Any of these can be overridden per request with ?behaviour=<name>, which is
-// how the generator drives a weighted distribution. Values outside the clamps
-// are corrected and logged rather than rejected, so a misconfigured scenario
-// shows up in the stub log instead of failing a whole load run.
+// how the generator drives a weighted distribution.
+//
+// Delays and chunk counts snap to the nearest allowed value rather than being
+// honoured exactly: ?ms=999999999 becomes 5000, ?n=1000000000 becomes 500.
+// Both are caller-controlled and each drives a timer, so an arbitrary value is
+// a resource-exhaustion vector. The response echoes the value actually used,
+// so a run's latencies are self-documenting.
 
 /** Delay between streamed chunks. Without it the kernel coalesces the whole
  * body into one segment and there is nothing for B7 to reassemble. */
@@ -136,11 +166,7 @@ export function behaviourSlow(
   path: string,
   ms: number,
 ): void {
-  const requested = Number.isFinite(ms) && ms >= 0 ? ms : 0;
-  const delay = Math.min(requested, MAX_DELAY_MS);
-  if (delay !== requested) {
-    console.warn(`slow: clamped ${requested}ms to ${delay}ms`);
-  }
+  const delay = resolveDelay(ms);
   setTimeout(() => {
     sendJson(res, 200, { stub: true, path, delayedMs: delay });
   }, delay);
@@ -204,12 +230,16 @@ export function behaviourChunked(
   path: string,
   chunks: number,
 ): void {
-  // Clamped for the same reason as the delay: each chunk schedules its own
-  // timer, so an unbounded ?n= is a way to pin the event loop indefinitely.
-  const requested = Number.isFinite(chunks) && chunks > 0 ? Math.floor(chunks) : 5;
-  const count = Math.min(requested, MAX_CHUNKS);
-  if (count !== requested) {
-    console.warn(`chunked: clamped ${requested} chunks to ${count}`);
+  // Same reasoning as the delay: selecting from a fixed set means the chunk
+  // count cannot be user-controlled at all, which is what actually closes the
+  // resource-exhaustion path (an unbounded ?n= is one timer per chunk).
+  let count = ALLOWED_CHUNKS[0] ?? 5;
+  if (Number.isFinite(chunks) && chunks > 0) {
+    for (const candidate of ALLOWED_CHUNKS) {
+      if (Math.abs(candidate - chunks) < Math.abs(count - chunks)) {
+        count = candidate;
+      }
+    }
   }
   const envelope = JSON.stringify({ stub: true, path, chunks: count });
   const body = envelope.padEnd(LARGE_BYTES, 'x');
