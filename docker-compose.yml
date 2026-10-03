@@ -52,6 +52,16 @@ services:
       redis:
         condition: service_healthy
     ports:
+      # Loopback only, and deliberately a single fixed port: the CI smoke test
+      # curls 127.0.0.1:3001/health directly.
+      #
+      # This mapping is what blocks `docker compose up --scale stub=3` (N
+      # replicas cannot share one host port) — A1's round-robin proof needs
+      # scaling, so that run needs the mapping dropped:
+      #   docker compose run --rm -d -p 3001 stub   # or override in a
+      #   compose.override.yml, then scale the service
+      # The proxy reaches upstreams over the compose network by service name, so
+      # no host port is needed for the proxy to load balance across instances.
       - "127.0.0.1:3001:3001"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
