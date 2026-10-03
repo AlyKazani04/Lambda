@@ -19,6 +19,20 @@ export const STATUS_CYCLE = [200, 201, 400, 401, 404, 429, 500] as const;
 export const SMALL_BYTES = 1024;
 export const LARGE_BYTES = 100 * 1024;
 
+/**
+ * Ceiling on any caller-supplied delay or count.
+ *
+ * `?ms=999999999` would otherwise pin a socket open indefinitely, and the load
+ * generator drives these endpoints in the thousands — unbounded timers are a
+ * resource-exhaustion vector (CodeQL js/resource-exhaustion flags the unclamped
+ * form). 30s is far beyond any latency worth plotting against a P99 target of
+ * 200ms, and still lets a request terminate on its own.
+ */
+const MAX_DELAY_MS = 30_000;
+
+/** Same ceiling for ?n= on the chunked endpoint: each chunk is one timer. */
+const MAX_CHUNKS = 512;
+
 /** Delay between streamed chunks. Without it the kernel coalesces the whole
  * body into one segment and there is nothing for B7 to reassemble. */
 const CHUNK_GAP_MS = 5;
@@ -93,13 +107,23 @@ export function behaviourLarge(res: ServerResponse, path: string): void {
 /**
  * Hold the response open for `ms`. This is what gives us a latency
  * distribution and a P99 instead of one meaningless average.
+ *
+ * The duration is caller-controlled, so it is clamped. `?ms=999999999` would
+ * otherwise pin a socket open indefinitely — the load generator drives this
+ * endpoint in the thousands, and unbounded timers are a resource-exhaustion
+ * vector (CodeQL js/resource-exhaustion flags the unclamped form). A day is far
+ * beyond any latency worth plotting and still terminates on its own.
  */
 export function behaviourSlow(
   res: ServerResponse,
   path: string,
   ms: number,
 ): void {
-  const delay = Number.isFinite(ms) && ms >= 0 ? ms : 0;
+  const requested = Number.isFinite(ms) && ms >= 0 ? ms : 0;
+  const delay = Math.min(requested, MAX_DELAY_MS);
+  if (delay !== requested) {
+    console.warn(`slow: clamped ${requested}ms to ${delay}ms`);
+  }
   setTimeout(() => {
     sendJson(res, 200, { stub: true, path, delayedMs: delay });
   }, delay);
@@ -163,7 +187,13 @@ export function behaviourChunked(
   path: string,
   chunks: number,
 ): void {
-  const count = Number.isFinite(chunks) && chunks > 0 ? Math.floor(chunks) : 5;
+  // Clamped for the same reason as the delay: each chunk schedules its own
+  // timer, so an unbounded ?n= is a way to pin the event loop indefinitely.
+  const requested = Number.isFinite(chunks) && chunks > 0 ? Math.floor(chunks) : 5;
+  const count = Math.min(requested, MAX_CHUNKS);
+  if (count !== requested) {
+    console.warn(`chunked: clamped ${requested} chunks to ${count}`);
+  }
   const envelope = JSON.stringify({ stub: true, path, chunks: count });
   const body = envelope.padEnd(LARGE_BYTES, 'x');
   const size = Math.ceil(body.length / count);
