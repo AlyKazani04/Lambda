@@ -31,8 +31,15 @@ RUN pnpm --filter proxy run build
 # ---- runtime stage -----------------------------------------------------
 FROM node:26-slim AS runner
 
+# libpcap0.8  — the runtime shared library @audc/pcap loads against
+# iproute2    — provides `tc`, which netem lives in. The proxy applies link
+#               emulation itself (tools/netem-up.sh), so this must exist in the
+#               final image; installing it at run time via apt would need root
+#               inside the container and fails once we drop to USER node.
+# libpcap-dev is deliberately NOT here — headers are build-time only, and are
+#               installed in the builder stage above.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpcap0.8 \
+    && apt-get install -y --no-install-recommends libpcap0.8 iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /repo
