@@ -1,9 +1,8 @@
 // Proxy configuration (F2 / A1).
 //
-// Everything that decides *where a request may go* lives here, so the routing
-// table and the upstream instance list are deployment inputs rather than
-// constants buried in the request path. `docker compose up --scale stub=3`
-// changes the instance count with no code change; ROUTES changes the table.
+// The routing table and the upstream instance list are deployment inputs, not
+// constants in the request path: `--scale stub=3` changes the instance count
+// with no code change, and ROUTES changes the table.
 
 /** One upstream instance, as the forwarder needs it. */
 export interface UpstreamTarget {
@@ -24,9 +23,9 @@ export interface ProxyConfig {
   port: number;
   routes: readonly Route[];
   /**
-   * Explicit instance lists, keyed by upstream group. A group missing from
-   * this map (or mapped to an empty list) is resolved from the hostname below
-   * instead — that is the compose-scaling path.
+   * Explicit instance lists, keyed by upstream group. A group missing here (or
+   * mapped to an empty list) is resolved from the hostname instead — that is
+   * the compose-scaling path.
    */
   explicitTargets: ReadonlyMap<string, readonly UpstreamTarget[]>;
   /** Hostname resolved to an instance list when no explicit targets are given. */
@@ -47,7 +46,7 @@ export interface ProxyConfig {
   discoveryIntervalMs: number;
 }
 
-/** Path prefix -> upstream group. Overridable wholesale via the ROUTES env var. */
+/** Path prefix -> upstream group. Overridable via the ROUTES env var. */
 export const DEFAULT_ROUTES: readonly Route[] = [
   { prefix: '/api', group: 'api' },
   { prefix: '/timeline', group: 'timeline' },
@@ -57,11 +56,6 @@ export const DEFAULT_PROXY_PORT = 8080;
 export const DEFAULT_UPSTREAM_HOST = '127.0.0.1';
 export const DEFAULT_UPSTREAM_PORT = 3001;
 export const DEFAULT_INSTANCE_COUNT = 3;
-/**
- * Re-resolve the upstream hostname every 5s by default. Compose's embedded DNS
- * is fast and this is one query per tick, so the cost is negligible next to the
- * cost of a silently collapsed rotation.
- */
 export const DEFAULT_DISCOVERY_INTERVAL_MS = 5000;
 
 /** Per-group override for UPSTREAM_TARGETS, e.g. UPSTREAM_TARGETS_TIMELINE. */
@@ -94,11 +88,7 @@ function readNonNegativeInt(
   return value;
 }
 
-/**
- * Normalise a configured prefix: leading slash required, trailing slashes
- * dropped. `/api/` and `/api` must describe the same route, otherwise the
- * segment-boundary match in router.ts sees two different prefixes.
- */
+/** Leading slash added, trailing slashes dropped, so `/api/` and `/api` are one route. */
 export function normalizePrefix(prefix: string): string {
   const trimmed = prefix.trim();
   if (trimmed === '' || trimmed === '/') return '/';
@@ -135,8 +125,8 @@ export function parseRoutes(raw: string | undefined): readonly Route[] {
 
 /**
  * Parse `host:port,host:port`. A bare integer is shorthand for
- * `127.0.0.1:<port>`, which is the common local case. Empty or absent means
- * "no explicit targets", which sends the caller down the DNS resolution path.
+ * `127.0.0.1:<port>`. Empty or absent means "no explicit targets", which sends
+ * the caller down the DNS resolution path.
  */
 export function parseTargets(raw: string | undefined): readonly UpstreamTarget[] {
   if (raw === undefined || raw.trim() === '') return [];
@@ -146,7 +136,6 @@ export function parseTargets(raw: string | undefined): readonly UpstreamTarget[]
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '')
     .map((entry) => {
-      // Bare port: the loopback shorthand.
       if (/^\d+$/.test(entry)) {
         const port = Number(entry);
         if (port <= 0 || port > 65535) {
@@ -155,7 +144,7 @@ export function parseTargets(raw: string | undefined): readonly UpstreamTarget[]
         return { host: DEFAULT_UPSTREAM_HOST, port };
       }
 
-      // rsplit on the last colon so IPv6 literals in brackets survive.
+      // Last colon, so a bracketed IPv6 literal survives.
       const separator = entry.lastIndexOf(':');
       if (separator <= 0) {
         throw new Error(`upstream target must be host:port, got ${JSON.stringify(entry)}`);
@@ -172,9 +161,8 @@ export function parseTargets(raw: string | undefined): readonly UpstreamTarget[]
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const routes = parseRoutes(env.ROUTES);
 
-  // Group -> instance list. A per-group UPSTREAM_TARGETS_<GROUP> beats the
-  // shared UPSTREAM_TARGETS, so /timeline can be pointed at a genuinely
-  // different upstream without changing the routing table.
+  // A per-group UPSTREAM_TARGETS_<GROUP> beats the shared UPSTREAM_TARGETS, so
+  // one group can point at a genuinely different upstream.
   const explicitTargets = new Map<string, readonly UpstreamTarget[]>();
   const sharedTargets = parseTargets(env.UPSTREAM_TARGETS);
   for (const group of new Set(routes.map((route) => route.group))) {

@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 // Verification harness for F2 (#7) / A1 (#15) — the L7 proxy core.
 //
-// Runs the BUILT artifacts (dist/), not the sources: the acceptance criteria
-// are about behaviour on the wire, and the build is what ships in the image.
+// Runs the BUILT artifacts (dist/), because the acceptance criteria are about
+// behaviour on the wire and the build is what ships in the image. Every check
+// prints the observable it is based on, so the transcript is the evidence.
 //
-// Layout
-//   upstream A, B, C   three stub instances  -> /api group   (round-robin)
-//   upstream D         a fourth stub         -> /timeline group
-//   harness upstream   a raw http server that records exactly what the proxy
-//                      forwarded (headers, method, target, body) and can hold
-//                      a response open so an abort can be observed upstream
-//
-// Every assertion prints the observable it is based on, so the transcript is
-// the evidence, not a summary of it.
+// Upstreams it stands up:
+//   stub-a/b/c   three instances -> /api group (round-robin)
+//   stub-d       a fourth, distinct instance -> /timeline group
+//   echo         records exactly what the proxy forwarded (headers, method,
+//                target, body), so stripping and passthrough are asserted
+//                against a real received request
+//   slowHold     holds a response open and reports when its socket closes, so
+//                an abort can be observed from the upstream side
 
 import { createServer, request as httpRequest } from 'node:http';
 import { spawn } from 'node:child_process';
@@ -47,8 +47,8 @@ function sleep(ms) {
 
 const children = [];
 
-// Child stdout is always captured (the assertions read it); echoing it to the
-// console is switchable so the abort-storm section does not bury the results.
+// Child stdout is always captured (the assertions read it); echoing is
+// switchable so the abort-storm section does not bury the results.
 let echoChildLogs = true;
 
 function spawnNode(script, env, label) {
@@ -134,9 +134,8 @@ function rawRequest({ port, method = 'GET', path: target, headers = {}, body, ti
   });
 }
 
-// Sends literal request bytes over a socket, bypassing Node's client-side
-// validation. Node refuses to *send* some headers a hostile or unusual client
-// would happily send (`Trailer` with no chunked encoding raises
+// Sends literal request bytes over a socket. Node refuses to *send* some headers
+// a real client would send (`Trailer` without chunked encoding raises
 // ERR_HTTP_TRAILER_INVALID), so header-stripping cannot be tested through the
 // http client API.
 function rawSocketRequest(port, rawBytes, timeoutMs = 5000) {
@@ -160,9 +159,8 @@ function rawSocketRequest(port, rawBytes, timeoutMs = 5000) {
 // harness upstreams
 // --------------------------------------------------------------------------
 
-// Records exactly what the proxy forwarded, so hop-by-hop stripping and
-// query-string/body preservation are asserted against a real received
-// request rather than inferred.
+// Records what the proxy forwarded, so hop-by-hop stripping and query-string and
+// body preservation are asserted against a real received request.
 const echoSeen = [];
 const echoServer = createServer((req, res) => {
   const chunks = [];
@@ -183,10 +181,9 @@ const echoServer = createServer((req, res) => {
   });
 });
 
-// Holds a response open, and records when its own socket closes. This is how
-// the client-abort criterion is measured from the upstream side: if the proxy
-// propagates the abort, the socket dies within ~1s of the client leaving, not
-// after the full hold.
+// Holds a response open and records when its own socket closes: the abort
+// criterion is measured from the upstream side, where a propagated abort kills
+// the socket within ~1s instead of after the full hold.
 const slowHold = { socketClosedAt: null, startedAt: null, activeSockets: 0 };
 const slowHoldServer = createServer((req, res) => {
   slowHold.startedAt = Date.now();
@@ -239,9 +236,8 @@ async function main() {
       `stub-${'abc'[i]}`,
     );
   }
-  // A fourth, distinct instance for /timeline, so "routes to a different
-  // upstream" is proven by a different address rather than by luck of the
-  // rotation.
+  // A fourth, distinct instance for /timeline, so "different upstream" is proven
+  // by a different address rather than by luck of the rotation.
   spawnNode(
     'apps/stub/dist/index.js',
     { STUB_PORT: String(STUB_BASE + 3), STUB_INSTANCE_ID: 'stub-d' },
@@ -252,9 +248,8 @@ async function main() {
   await waitForPort(ECHO_PORT);
   await waitForPort(SLOWHOLD_PORT);
 
-  // Proxy: /api -> A,B,C (three instances, round-robin); /timeline -> D.
-  // The instance count is configuration, not a source constant: A,B,C come
-  // from UPSTREAM_TARGETS and D from the per-group override.
+  // Proxy: /api -> A,B,C; /timeline -> D. A,B,C come from UPSTREAM_TARGETS and D
+  // from the per-group override, so the instance count is configuration.
   const proxy = spawnNode(
     'apps/proxy/dist/index.js',
     {
@@ -295,9 +290,8 @@ async function main() {
   console.log('\n=== C2: GET /timeline/anything routes to a DIFFERENT upstream ===');
   {
     const res = await rawRequest({ port: PROXY_PORT, path: '/timeline/anything' });
-    // The stub's /timeline default behaviour is `small`, which pads the body to
-    // exactly 1024 bytes — so it is deliberately not parseable JSON. Assert on
-    // the prefix the envelope guarantees.
+    // The stub's /timeline default is `small`, which pads the body to exactly
+    // 1024 bytes and is therefore deliberately not parseable JSON.
     check(
       'GET /timeline/anything -> 200 from a stub (small behaviour, 1024B)',
       res.status === 200 && res.body.startsWith('{"stub":true,"path":"/timeline/anything"'),
@@ -356,9 +350,8 @@ async function main() {
       `${STUB_BASE + 1}`,
       `${STUB_BASE + 2}`,
     ].map((p) => `127.0.0.1:${p}`);
-    // The pool is already advanced by C1's request, so the *starting* offset is
-    // not assumed: assert the sequence is a strict rotation in the pool's
-    // configured order, wrapping, with all three instances visited.
+    // The pool is already advanced by C1's request, so the starting offset is not
+    // assumed: assert a strict rotation in configured order, wrapping, visiting all three.
     const poolOrder = expected.slice(0, 3);
     const offset = poolOrder.indexOf(seen[0]);
     const isRotation =
@@ -390,14 +383,14 @@ async function main() {
       list.length === 3,
       `api group = [${list.join(', ')}]`,
     );
-    // Prove it is genuinely configuration: restart the proxy with a different
-    // count and a different address set, and confirm the rotation changes.
+    // Prove it is genuinely configuration: restart with a different count and a
+    // different address set and confirm the rotation changes.
     const altPort = 18081;
     const altProxy = spawnNode(
       'apps/proxy/dist/index.js',
       {
         PROXY_PORT: String(altPort),
-        // Two instances only, and the second is a *different* address, so a
+        // Two instances only, and the second is a different address, so a
         // hardcoded list could not produce this rotation.
         UPSTREAM_TARGETS: `${STUB_BASE},${STUB_BASE + 1}`,
         UPSTREAM_TARGETS_TIMELINE: String(STUB_BASE + 3),
@@ -461,8 +454,8 @@ async function main() {
       `status=${res.status} body=${res.body.slice(0, 80)}`,
     );
 
-    // The stub does not echo request bodies, so send one at a harness upstream
-    // to assert the body and its framing explicitly.
+    // The stub does not echo request bodies, so send one at a harness upstream to
+    // assert the body and its framing explicitly.
     const proxyEchoPort = 18082;
     const echoProxy = spawnNode(
       'apps/proxy/dist/index.js',
@@ -514,9 +507,9 @@ async function main() {
     );
     await waitForPort(proxyHopPort);
     await sleep(300);
-    // Literal bytes: all eight headers the RFC names as hop-by-hop, plus one
-    // the client declares hop-by-hop by naming it in Connection, plus one
-    // genuine end-to-end header that must survive.
+    // Literal bytes: all eight hop-by-hop headers the RFC names, plus one the
+    // client declares hop-by-hop by naming it in Connection, plus one genuine
+    // end-to-end header that must survive.
     await rawSocketRequest(
       proxyHopPort,
       'GET /api/hop HTTP/1.1\r\n' +
@@ -536,8 +529,8 @@ async function main() {
     const got = echoSeen.at(-1);
     const forwardedNames = Object.keys(got?.headers ?? {});
 
-    // The seven headers that have no legitimate reason to appear upstream at
-    // all. `Connection` is handled separately below.
+    // The seven headers with no legitimate reason to appear upstream at all.
+    // `Connection` is handled separately below.
     const mustBeAbsent = [
       'keep-alive',
       'proxy-authenticate',
@@ -553,11 +546,11 @@ async function main() {
       `still present upstream: [${mustBeAbsent.join(', ')}]`,
     );
 
-    // `Connection` DOES appear upstream, and that is correct rather than a
-    // leak: the proxy is a new hop, so node's http client sets its own
-    // `Connection: keep-alive` for the proxy->upstream connection. What must
-    // not survive is the *client's* value. Asserted two ways: the custom token
-    // the client declared in it is gone, and the value is node's own default.
+    // `Connection` DOES appear upstream, and that is correct rather than a leak:
+    // the proxy is a new hop, so node's http client sets its own
+    // `Connection: keep-alive` for the proxy->upstream connection. What must not
+    // survive is the *client's* value, asserted two ways: the custom token the
+    // client declared in it is gone, and the value is node's own default.
     check(
       'the client Connection value did not survive (no client token upstream)',
       !String(got?.headers['connection'] ?? '').includes('x-custom-hop') &&
@@ -566,8 +559,8 @@ async function main() {
         `(client sent "keep-alive, X-Custom-Hop"; node sets its own per-hop value)`,
     );
 
-    // The client sent no body and therefore no framing header. The upstream
-    // must not see one invented for it, and must not see a stale one.
+    // The client sent no body and therefore no framing header; the upstream must
+    // not see one invented or a stale one forwarded.
     check(
       'no stale body-framing header was forwarded to the upstream',
       got?.headers['content-length'] === undefined &&
@@ -585,10 +578,9 @@ async function main() {
 
   console.log('\n=== C9: upstream status codes (incl. 4xx/5xx) reach the client unchanged ===');
   {
-    // Fresh stub instances on their own proxy, because the stub's status
-    // rotation is a process-wide cursor: asserting the exact sequence
-    // 200,201,400,401,404,429,500 only works from cursor 0, and the shared
-    // instances have already served requests by now.
+    // Fresh stub instances on their own proxy, because the stub's status rotation
+    // is a process-wide cursor: asserting the exact sequence only works from
+    // cursor 0, and the shared instances have already served requests by now.
     const statusStubPort = 13120;
     const statusProxyPort = 18086;
     const statusStub = spawnNode(
@@ -640,8 +632,8 @@ async function main() {
 
   console.log('\n=== C10: status code, content-type and body preserved exactly ===');
   {
-    // Compare the proxy's response against a direct hit on the same stub for
-    // a byte-exact body and identical framing headers.
+    // Compare against a direct hit on the same stub for a byte-exact body and
+    // identical framing headers.
     const direct = await rawRequest({ port: STUB_BASE, path: '/api/small' });
     const through = await rawRequest({ port: PROXY_PORT, path: '/api/small' });
     check(
@@ -678,8 +670,8 @@ async function main() {
 
   console.log('\n=== C11: aborting a client request does not leak the socket ===');
   {
-    // (a) Upstream-side proof: the proxy must tear the upstream socket down
-    // shortly after the client leaves, not after the upstream's full 5s hold.
+    // (a) Upstream-side proof: the proxy must tear the upstream socket down soon
+    // after the client leaves, not after the upstream's full 5s hold.
     const proxyAbortPort = 18084;
     const abortProxy = spawnNode(
       'apps/proxy/dist/index.js',
@@ -726,8 +718,7 @@ async function main() {
     );
     abortProxy.kill('SIGKILL');
 
-    // (b) Bounded-growth proof on the main proxy: socket count must not grow
-    // linearly with the number of aborted requests.
+    // (b) Bounded-growth proof: socket count must not grow linearly with aborts.
     const countAfterWarmup = await proxySocketCount(proxy.pid);
     echoChildLogs = false; // 60 aborted requests would bury the results
     for (let round = 0; round < 60; round += 1) {
@@ -821,10 +812,10 @@ async function main() {
 
   console.log('\n=== C15: instances are discovered from the resolved host, not hardcoded ===');
   {
-    // A hostname that resolves to two different addresses is the local
-    // equivalent of `docker compose --scale stub=2`. `localhost` resolves to
-    // both ::1 and 127.0.0.1, so two upstreams at the same port on different
-    // families gives a real two-instance rotation driven purely by resolution.
+    // A hostname resolving to two addresses is the local equivalent of
+    // `--scale stub=2`: `localhost` resolves to both ::1 and 127.0.0.1, so two
+    // upstreams at the same port on different families give a real two-instance
+    // rotation driven purely by resolution.
     const dualPort = 13201;
     const v4 = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -878,8 +869,8 @@ async function main() {
       `observed: ${seen.join(' -> ')}`,
     );
 
-    // Re-discovery must be a no-op when DNS is stable — otherwise every tick
-    // would rewrite the pool and reset rotation.
+    // Re-discovery must be a no-op when DNS is stable, or every tick would
+    // rewrite the pool and reset rotation.
     const churn = dualProxy.stdoutLines.filter((l) => l.startsWith('upstream discovery:'));
     check(
       'stable DNS produces no pool churn (no repeated discovery rewrites)',

@@ -1,9 +1,7 @@
 // Request/response forwarding (F2 / A1).
 //
-// Node's http module gives us the request as a readable stream and the
-// response as a writable one, so the body is piped rather than handled chunk
-// by chunk. Headers are NOT part of the stream: they are read, filtered and
-// written explicitly.
+// The body is piped, not handled chunk by chunk. Headers are NOT part of the
+// stream: they are read, filtered and written explicitly.
 
 import { request as httpRequest } from 'node:http';
 import type {
@@ -18,7 +16,7 @@ import type { UpstreamInstance } from './upstream.js';
 /**
  * Headers that describe the *current* connection rather than the message.
  * Forwarding them corrupts the next hop, and the failure only shows up under
- * keep-alive — the worst time to discover it. RFC 9110 §7.6.1.
+ * keep-alive. RFC 9110 §7.6.1.
  */
 const HOP_BY_HOP_HEADERS = new Set([
   'connection',
@@ -32,11 +30,8 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 /**
- * Drop hop-by-hop headers.
- *
- * Also drops any header the `Connection` header *names*: those are hop-by-hop
- * by declaration, so removing only the fixed set above still forwards headers
- * the sender marked as belonging to this connection alone.
+ * Drop hop-by-hop headers, plus any header the `Connection` header *names* —
+ * those are hop-by-hop by declaration, so the fixed set above is not enough.
  */
 export function stripHopByHop(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
   const declaredHopByHop = new Set(
@@ -62,9 +57,8 @@ export interface ForwardOutcome {
 /**
  * Forward `req` to `instance` and pipe the upstream response back.
  *
- * `onSettled` fires once with the status written to the client (or 502 when
- * the upstream could not be reached), so the caller can log the outcome
- * without this module knowing anything about logging.
+ * `onSettled` fires once with the status written to the client, so the caller
+ * can log the outcome without this module knowing anything about logging.
  */
 export function forward(
   req: IncomingMessage,
@@ -86,10 +80,9 @@ export function forward(
     headers: stripHopByHop(req.headers),
   });
 
-  // A client that goes away mid-request must take the upstream request with
-  // it, or the socket stays open until the file-descriptor limit is reached.
-  // `res` emits 'close' both when we finish it and when the peer vanishes;
-  // writableFinished is what tells the two apart.
+  // A client that goes away mid-request must take the upstream request with it,
+  // or the socket stays open until the file-descriptor limit is reached. `res`
+  // emits 'close' on both finish and abort; writableFinished tells them apart.
   res.on('close', () => {
     if (!res.writableFinished) upstreamReq.destroy();
   });
@@ -97,22 +90,20 @@ export function forward(
   upstreamReq.on('response', (upstreamRes) => {
     const status = upstreamRes.statusCode ?? 502;
 
-    // Status code is passed explicitly — it does not default to 200 the way
-    // piping makes it look. writeHead must also precede any body write.
+    // The status code must be passed explicitly and writeHead must precede any
+    // body write.
     //
-    // Upstream headers are echoed here (minus hop-by-hop). That is safe only
-    // because v1 never alters the body, so the upstream's Content-Length and
-    // framing still describe what we send. A6 (caching) and A8 (TLS
-    // termination) rewrite bodies, and at that point Content-Length and
-    // Transfer-Encoding must be recomputed rather than forwarded.
+    // Echoing upstream headers is safe only because v1 never alters the body,
+    // so the upstream's Content-Length and framing still describe what we send.
+    // A6 (caching) and A8 (TLS termination) rewrite bodies, and at that point
+    // Content-Length and Transfer-Encoding must be recomputed, not forwarded.
     res.writeHead(status, upstreamRes.statusMessage, stripHopByHop(upstreamRes.headers));
 
     // A truncated upstream response — the stub's /api/reset, or any upstream
     // that dies mid-body — must not become a response that never ends. Node
-    // reports the truncation as `complete === false` on close, and as an error
-    // on the response or the request depending on how the socket died; all
-    // three paths destroy the client socket so the client sees the same broken
-    // connection instead of a hang.
+    // reports truncation as `complete === false` on close, and as an error on
+    // the response or the request depending on how the socket died; both paths
+    // destroy the client socket so it sees the broken connection, not a hang.
     upstreamRes.on('close', () => {
       if (!upstreamRes.complete) res.destroy();
     });
@@ -131,19 +122,17 @@ export function forward(
 
   upstreamReq.on('error', (error: Error) => {
     if (res.destroyed || res.writableEnded) {
-      // The client is already gone — this is the abort path, where we tore the
-      // upstream request down ourselves. There is nobody to answer, so writing
-      // a status would be a lie in the log and a no-op on the wire. 499 is
-      // nginx's "client closed request"; it keeps the outcome line readable
-      // instead of reporting a 502 that never reached anyone.
+      // The client is already gone and we tore the upstream request down
+      // ourselves, so nobody is there to answer. 499 is nginx's "client closed
+      // request" — reporting a 502 that never reached anyone would make the log
+      // line a misleading diagnosis.
       settled(499);
       return;
     }
 
     if (res.headersSent) {
-      // Headers are already on the wire, so there is no clean way to report
-      // this. Destroying the socket is honest: a truncated body tells the
-      // client the response is not complete.
+      // Headers are already on the wire. Destroying the socket is honest: a
+      // truncated body tells the client the response is not complete.
       res.destroy();
       settled(res.statusCode);
       return;
