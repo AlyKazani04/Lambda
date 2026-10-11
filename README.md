@@ -56,6 +56,78 @@ stress-test/   load generator (runs on the second laptop)
 tools/         capture-check, netem, parser validation
 ```
 
+## Proxy core (F2 / A1)
+
+`apps/proxy` accepts a request, resolves its path prefix to an upstream group,
+picks the next instance in that group's rotation, and pipes the request and
+response through. The pieces:
+
+| File          | Responsibility                                              |
+| ------------- | ----------------------------------------------------------- |
+| `config.ts`   | routing table, upstream targets and counts from environment  |
+| `router.ts`   | longest-prefix match on segment boundaries; 404 on no match  |
+| `upstream.ts` | round-robin pools, per group, with DNS instance discovery    |
+| `forwarder.ts`| header filtering, piping, client-abort propagation           |
+| `index.ts`    | server, `/health`, per-request upstream log                  |
+
+Default routing table: `/api/*` and `/timeline/*` both go to the stub service.
+`GET /health` is answered by the proxy itself and never forwarded.
+
+### Configuration
+
+| Variable                         | Default      | Notes                                                           |
+| -------------------------------- | ------------ | --------------------------------------------------------------- |
+| `PROXY_PORT`                     | `8080`       | Bind port                                                       |
+| `PROXY_HOST`                     | `0.0.0.0`    | Loopback binds are unreachable from Laptop B                    |
+| `ROUTES`                         | see above    | JSON array of `{ prefix, group }`                                |
+| `UPSTREAM_HOST`                  | `127.0.0.1`  | Service name or address; resolved to the instance list          |
+| `UPSTREAM_PORT`                  | `3001`       |                                                                  |
+| `UPSTREAM_INSTANCES`             | `3`          | Cap on resolved instances; must be >= replica count             |
+| `UPSTREAM_DISCOVERY_INTERVAL_MS` | `5000`       | Re-resolve interval; `0` disables                                |
+| `UPSTREAM_TARGETS`               | unset        | `host:port,...` (a bare port means loopback). Pins the list      |
+| `UPSTREAM_TARGETS_<GROUP>`       | unset        | Per-group override, e.g. `UPSTREAM_TARGETS_TIMELINE`            |
+
+### Load balancing across N instances
+
+The instance list comes from resolving `UPSTREAM_HOST`, so scaling the stub
+service scales the rotation — no code change and no list to maintain:
+
+```bash
+# The base compose file publishes the stub on a fixed host port for the CI
+# smoke test, and N replicas cannot share one host port, so drop that mapping
+# for a scaled run (compose.override.yml is the place to do it).
+docker compose -f docker-compose.yml -f compose.override.yml up -d --scale stub=3
+docker compose logs -f proxy | grep group=api     # one line per request
+```
+
+Every request logs `upstream=<host:port> group=<group> <method> <url>`. That one
+line is the whole diagnosis when the rotation looks wrong, and it is the
+evidence for "6 consecutive requests rotate across all three instances".
+
+Two gotchas worth knowing before you debug a rotation that never advances:
+
+- **`depends_on: service_healthy` waits for one replica of a service, not all
+  N.** The proxy can therefore start, resolve the service name while only one
+  replica has registered, and cache a one-address list. Re-resolution on
+  `UPSTREAM_DISCOVERY_INTERVAL_MS` closes that race and logs each change
+  (`upstream discovery: group=api instances [...] -> [...]`). If you see the
+  rotation collapsed to one instance, check whether that line has fired.
+- **`UPSTREAM_INSTANCES` is a cap, not a demand.** If it is lower than the
+  replica count, the surplus replicas are simply never selected — nothing warns
+  you, because from the proxy's side the list is exactly as configured.
+
+### Verifying the proxy core
+
+`tools/verify-proxy-core.mjs` exercises the built artifacts end to end: it
+starts its own stub instances, a recording upstream, and several proxy
+processes, then asserts each acceptance criterion and prints the observable it
+based the verdict on.
+
+```bash
+pnpm build
+node tools/verify-proxy-core.mjs
+```
+
 ## Commands
 
 | Command                        | Purpose                                                   |
@@ -65,6 +137,7 @@ tools/         capture-check, netem, parser validation
 | `pnpm build`                   | Build all packages                                        |
 | `pnpm lint`                    | Lint all packages                                         |
 | `pnpm infra:up` / `infra:down` | Start/stop Docker services (**needs `sudo`** — see above) |
+| `node tools/verify-proxy-core.mjs` | Behavioural verification of the proxy core (needs `pnpm build` first) |
 
 ## Continuous integration
 
