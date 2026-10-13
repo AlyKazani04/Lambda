@@ -270,7 +270,7 @@ export function behaviourChunked(
   });
 }
 
-/** Dispatch to the behaviour named by the resolved scenario. */
+// Dispatch to the behaviour named by the resolved scenario.
 export function apply(
   behaviour: Behaviour,
   res: ServerResponse,
