@@ -12,6 +12,17 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379
+      # Where the upstreams live, on the compose network. Without these the
+      # proxy falls back to its local defaults (127.0.0.1:3001) and every
+      # request 502s — inside a container, loopback is the container's own.
+      #
+      # UPSTREAM_HOST is the *service* name, not an address: `docker compose up
+      # --scale stub=3` gives it three A records on the compose network, and
+      # those resolved addresses are the round-robin instance list (A1's
+      # rotation proof). The count caps how many of them are used.
+      UPSTREAM_HOST: stub
+      UPSTREAM_PORT: 3001
+      UPSTREAM_INSTANCES: 3
     # NET_ADMIN grants network administration (interface config, tc traffic
     # control) for netem and capture. Does NOT make the container root — the
     # image drops to USER node.
