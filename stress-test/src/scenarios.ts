@@ -74,31 +74,46 @@ export const SCENARIOS: ReadonlyArray<Scenario> = [
   },
 ];
 
-// Precomputed once: waste at 10k req/s
-const CUMULATIVE: ReadonlyArray<number> = (() => {
-  const out: number[] = [];
+export interface WeightedTable {
+  readonly scenarios: ReadonlyArray<Scenario>;
+  readonly cumulative: ReadonlyArray<number>;
+  readonly total: number;
+}
+
+// Precompute cumulative weights once
+export function buildTable(scenarios: ReadonlyArray<Scenario>): WeightedTable {
+  const cumulative: number[] = [];
   let sum = 0;
 
-  for (const s of SCENARIOS) {
+  for (const s of scenarios) {
     sum += s.weight;
-    out.push(sum);
+    cumulative.push(sum);
   }
 
-  return out;
-})();
+  return {
+    scenarios,
+    cumulative,
+    total: cumulative[cumulative.length - 1] ?? 0,
+  };
+}
 
-export const TOTAL_WEIGHT = CUMULATIVE[CUMULATIVE.length - 1] ?? 0;
+export const DEFAULT_TABLE = buildTable(SCENARIOS);
 
-// Pick a scenario by weighted random selection
-export function pick(rng: () => number): Scenario {
-  const r = rng() * TOTAL_WEIGHT;
-  for (let i = 0; i < SCENARIOS.length; i += 1) {
-    if ((CUMULATIVE[i] ?? 0) > r) {
-      return SCENARIOS[i] as Scenario;
+export const TOTAL_WEIGHT = DEFAULT_TABLE.total;
+
+export function pickFrom(rng: () => number, table: WeightedTable): Scenario {
+  const r = rng() * table.total;
+  for (let i = 0; i < table.scenarios.length; i += 1) {
+    if ((table.cumulative[i] ?? 0) > r) {
+      return table.scenarios[i] as Scenario;
     }
   }
 
-  return SCENARIOS[SCENARIOS.length - 1] as Scenario;
+  return table.scenarios[table.scenarios.length - 1] as Scenario;
+}
+
+export function pick(rng: () => number): Scenario {
+  return pickFrom(rng, DEFAULT_TABLE);
 }
 
 // Query string or '' when none needed
@@ -115,4 +130,24 @@ export function queryFor(scenario: Scenario): string {
 
   const qs = params.toString();
   return qs === '' ? '' : `?${qs}`;
+}
+
+export function urlFor(target: string, scenario: Scenario): string {
+  return `${target}${scenario.path}${queryFor(scenario)}`;
+}
+
+// Fixed size so bytesOut is non-zero and identical across runs
+const POST_BODY = JSON.stringify({ pad: 'x'.repeat(480) });
+
+export function bodyFor(scenario: Scenario): string | undefined {
+  return scenario.method === 'POST' ? POST_BODY : undefined;
+}
+
+export function applyWeights(
+  overrides: Record<string, number>,
+): ReadonlyArray<Scenario> {
+  return SCENARIOS.map((s) => {
+    const override = overrides[s.name];
+    return override === undefined ? s : { ...s, weight: override };
+  });
 }
