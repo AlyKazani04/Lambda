@@ -23,7 +23,7 @@ sudo docker compose up -d      # not: pnpm infra:up
 
 `pnpm infra:up` currently runs `docker compose` without `sudo` and will fail
 with `permission denied ... /var/run/docker.sock`. Prefix with `sudo` for now,
-or update the script once you decide which way to go.
+or update the script once decided which way to go.
 
 ## Environment
 
@@ -62,30 +62,30 @@ tools/         capture-check, netem, parser validation
 picks the next instance in that group's rotation, and pipes the request and
 response through. The pieces:
 
-| File          | Responsibility                                              |
-| ------------- | ----------------------------------------------------------- |
-| `config.ts`   | routing table, upstream targets and counts from environment  |
-| `router.ts`   | longest-prefix match on segment boundaries; 404 on no match  |
-| `upstream.ts` | round-robin pools, per group, with DNS instance discovery    |
-| `forwarder.ts`| header filtering, piping, client-abort propagation           |
-| `index.ts`    | server, `/health`, per-request upstream log                  |
+| File           | Responsibility                                              |
+| -------------- | ----------------------------------------------------------- |
+| `config.ts`    | routing table, upstream targets and counts from environment |
+| `router.ts`    | longest-prefix match on segment boundaries; 404 on no match |
+| `upstream.ts`  | round-robin pools, per group, with DNS instance discovery   |
+| `forwarder.ts` | header filtering, piping, client-abort propagation          |
+| `index.ts`     | server, `/health`, per-request upstream log                 |
 
 Default routing table: `/api/*` and `/timeline/*` both go to the stub service.
 `GET /health` is answered by the proxy itself and never forwarded.
 
 ### Configuration
 
-| Variable                         | Default      | Notes                                                           |
-| -------------------------------- | ------------ | --------------------------------------------------------------- |
-| `PROXY_PORT`                     | `8080`       | Bind port                                                       |
-| `PROXY_HOST`                     | `0.0.0.0`    | Loopback binds are unreachable from Laptop B                    |
-| `ROUTES`                         | see above    | JSON array of `{ prefix, group }`                                |
-| `UPSTREAM_HOST`                  | `127.0.0.1`  | Service name or address; resolved to the instance list          |
-| `UPSTREAM_PORT`                  | `3001`       |                                                                  |
-| `UPSTREAM_INSTANCES`             | `3`          | Cap on resolved instances; must be >= replica count             |
-| `UPSTREAM_DISCOVERY_INTERVAL_MS` | `5000`       | Re-resolve interval; `0` disables                                |
-| `UPSTREAM_TARGETS`               | unset        | `host:port,...` (a bare port means loopback). Pins the list      |
-| `UPSTREAM_TARGETS_<GROUP>`       | unset        | Per-group override, e.g. `UPSTREAM_TARGETS_TIMELINE`            |
+| Variable                         | Default     | Notes                                                       |
+| -------------------------------- | ----------- | ----------------------------------------------------------- |
+| `PROXY_PORT`                     | `8080`      | Bind port                                                   |
+| `PROXY_HOST`                     | `0.0.0.0`   | Loopback binds are unreachable from Laptop B                |
+| `ROUTES`                         | see above   | JSON array of `{ prefix, group }`                           |
+| `UPSTREAM_HOST`                  | `127.0.0.1` | Service name or address; resolved to the instance list      |
+| `UPSTREAM_PORT`                  | `3001`      |                                                             |
+| `UPSTREAM_INSTANCES`             | `3`         | Cap on resolved instances; must be >= replica count         |
+| `UPSTREAM_DISCOVERY_INTERVAL_MS` | `5000`      | Re-resolve interval; `0` disables                           |
+| `UPSTREAM_TARGETS`               | unset       | `host:port,...` (a bare port means loopback). Pins the list |
+| `UPSTREAM_TARGETS_<GROUP>`       | unset       | Per-group override, e.g. `UPSTREAM_TARGETS_TIMELINE`        |
 
 ### Load balancing across N instances
 
@@ -116,35 +116,23 @@ Two gotchas worth knowing before you debug a rotation that never advances:
   replica count, the surplus replicas are simply never selected — nothing warns
   you, because from the proxy's side the list is exactly as configured.
 
-### Verifying the proxy core
-
-`tools/verify-proxy-core.mjs` exercises the built artifacts end to end: it
-starts its own stub instances, a recording upstream, and several proxy
-processes, then asserts each acceptance criterion and prints the observable it
-based the verdict on.
-
-```bash
-pnpm build
-node tools/verify-proxy-core.mjs
-```
-
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and
 reports what it measured. It runs on the second laptop and is the source of
 every latency, throughput and error-rate figure in the report.
 
-| File             | Responsibility                                            |
-| ---------------- | ---------------------------------------------------------- |
-| `config.ts`      | CLI flags, defaults and validation                         |
-| `scenarios.ts`   | weighted scenario table, seeded RNG, request bodies        |
-| `probe.ts`       | one measured request: status, latency, bytes in/out        |
-| `aggregator.ts`  | tiered latency histogram, percentiles, cross-worker merge  |
-| `worker.ts`      | one `worker_thread`: concurrency pool, ramp, per-worker tally |
-| `generator.ts`   | spawns workers, merges their histograms, ships reports     |
-| `clock.ts`       | clock offset against the collector, measured before the run |
-| `reporter.ts`    | POSTs aggregates over HTTP — never Redis                   |
-| `index.ts`       | CLI entry and the printed summary                          |
+| File            | Responsibility                                                |
+| --------------- | ------------------------------------------------------------- |
+| `config.ts`     | CLI flags, defaults and validation                            |
+| `scenarios.ts`  | weighted scenario table, seeded RNG, request bodies           |
+| `probe.ts`      | one measured request: status, latency, bytes in/out           |
+| `aggregator.ts` | tiered latency histogram, percentiles, cross-worker merge     |
+| `worker.ts`     | one `worker_thread`: concurrency pool, ramp, per-worker tally |
+| `generator.ts`  | spawns workers, merges their histograms, ships reports        |
+| `clock.ts`      | clock offset against the collector, measured before the run   |
+| `reporter.ts`   | POSTs aggregates over HTTP — never Redis                      |
+| `index.ts`      | CLI entry and the printed summary                             |
 
 ### Running it
 
@@ -164,86 +152,77 @@ node stress-test/dist/index.js --target http://<laptop-a>:8080 \
 
 ### Configuration
 
-| Flag                    | Default                 | Notes                                                          |
-| ----------------------- | ----------------------- | -------------------------------------------------------------- |
-| `--target`              | `http://127.0.0.1:3001` | Base URL. Must change between local and cross-machine runs      |
-| `--duration`            | `10000`                 | Run length in ms                                                |
-| `--concurrency`         | `50`                    | Target in-flight requests, split across workers                 |
-| `--ramp`                | `2000`                  | Ramp window in ms; `0` starts at full concurrency               |
-| `--workers`             | `0`                     | Worker threads; `0` means one per CPU core                      |
-| `--seed`                | `12345`                 | RNG seed, recorded in the report so runs are comparable         |
-| `--weights`             | unset                   | Scenario overrides, e.g. `like:20,follow:5`                     |
-| `--collector`           | unset                   | POST aggregates here; omit to skip shipping                     |
-| `--report-interval`     | `2000`                  | Periodic report cadence in ms; `0` = end of run only            |
-| `--label`               | `run`                   | Run label carried in every report                               |
+| Flag                | Default                 | Notes                                                      |
+| ------------------- | ----------------------- | ---------------------------------------------------------- |
+| `--target`          | `http://127.0.0.1:3001` | Base URL. Must change between local and cross-machine runs |
+| `--duration`        | `10000`                 | Run length in ms                                           |
+| `--concurrency`     | `50`                    | Target in-flight requests, split across workers            |
+| `--ramp`            | `2000`                  | Ramp window in ms; `0` starts at full concurrency          |
+| `--workers`         | `0`                     | Worker threads; `0` means one per CPU core                 |
+| `--seed`            | `12345`                 | RNG seed, recorded in the report so runs are comparable    |
+| `--weights`         | unset                   | Scenario overrides, e.g. `like:20,follow:5`                |
+| `--collector`       | unset                   | POST aggregates here; omit to skip shipping                |
+| `--report-interval` | `2000`                  | Periodic report cadence in ms; `0` = end of run only       |
+| `--label`           | `run`                   | Run label carried in every report                          |
 
-### Measurement decisions worth knowing
+### Measurement decisions
 
-- **Latency is client-side and includes queueing at the proxy.** That is the
-  end-to-end number we want, but it means the proxy's own overhead has to be
-  logged separately (A2) or the two get conflated.
-- **Percentiles, never the average.** 99 requests at 10 ms and one at 3 s gives
-  an average of 39.9 ms, which describes no request anyone made. P99 is 3 s.
-  The histogram is tiered — 50 µs buckets below 10 ms, coarser above — so
-  sub-millisecond resolution survives where it matters.
-- **Percentiles overestimate by at most one bucket width**, because a bucket
-  reports its upper edge. At the fast end that is 50 µs.
+- **Latency is client-side and includes queueing at the proxy.** The proxy's own
+  overhead needs logging separately (A2) or the two get conflated.
+- **Percentiles, not the average.** 99 requests at 10 ms and one at 3 s average
+  39.9 ms, which describes no request anyone made; P99 is 3 s.
+- **The histogram is tiered** — 50 µs buckets below 10 ms, coarser above.
+- **Percentiles overestimate by at most one bucket width**, since a bucket
+  reports its upper edge. 50 µs at the fast end.
 - **The generator is closed-loop**, so a slow server throttles it and P99 is
-  understated (*coordinated omission*). The summary prints the loop mode
-  explicitly; state it whenever you quote a number.
-- **`bytesIn` is measured, not read from `Content-Length`.** Chunked responses
-  have no such header, and on a truncated response the header describes what was
+  understated (_coordinated omission_). The summary prints the loop mode.
+- **`bytesIn` is measured, not read from `Content-Length`** — chunked responses
+  have no such header, and a truncated response's header describes what was
   intended rather than what arrived.
-- **A failed request still contributes its latency**, otherwise a 3-second
-  timeout vanishes from the tail and biases P99 downward. Transport failures are
-  recorded as status `0` / key `transport`, so they stay distinguishable from a
-  real 5xx.
+- **A failed request still contributes its latency**, so a 3-second timeout does
+  not vanish from the tail. Transport failures record as status `0` / key
+  `transport`, distinct from a real 5xx.
 
 ### Scenario mix
 
-Five weighted scenarios, retained from the spec. Each drives a stub behaviour so
-the run exercises a mix rather than a uniform hammer.
+Five weighted scenarios, retained from the spec. Each drives a stub behaviour.
 
-| Scenario        | Weight | Endpoint              | Behaviour          |
-| --------------- | ------ | --------------------- | ------------------ |
-| `read_timeline` | 40%    | `/timeline/home`      | ~1 KB JSON         |
-| `post_tweet`    | 25%    | `/api/small`          | chunked, 8 chunks  |
-| `like`          | 15%    | `/api/small`          | ~1 KB JSON         |
-| `follow`        | 10%    | `/api/slow?ms=250`    | delayed 250 ms     |
-| `view_profile`  | 10%    | `/api/status`         | rotating 2xx/4xx/5xx |
+| Scenario        | Weight | Endpoint           | Behaviour            |
+| --------------- | ------ | ------------------ | -------------------- |
+| `read_timeline` | 40%    | `/timeline/home`   | ~1 KB JSON           |
+| `post_tweet`    | 25%    | `/api/small`       | chunked, 8 chunks    |
+| `like`          | 15%    | `/api/small`       | ~1 KB JSON           |
+| `follow`        | 10%    | `/api/slow?ms=250` | delayed 250 ms       |
+| `view_profile`  | 10%    | `/api/status`      | rotating 2xx/4xx/5xx |
 
-The observed mix is printed next to the configured weights, so a run proves its
-own shape rather than asserting it.
+The observed mix prints next to the configured weights.
 
-### Two things that will look like bugs
+### Two failure modes
 
-- **The generator must never open a Redis connection.** Pub/Sub does not cross
-  machines, so a remote publish fails silently with no error — the worst kind of
-  failure. Aggregates go over HTTP. Verify with
+- **A Redis connection from the generator.** Pub/Sub does not cross machines, so
+  a remote publish fails silently. Aggregates go over HTTP. Verify with
   `ss -tnp | grep <generator-pid> | grep 6379`; it must be empty.
 - **`ulimit -n`.** Hundreds of concurrent sockets can exhaust file descriptors,
-  and the symptom is a mystifying `EMFILE` partway through a long run.
+  surfacing as an `EMFILE` partway through a long run.
 
 ### Clock offset
 
-`clock.ts` asks the collector for its time and records the offset at run start.
-Correlating "this request was slow" (generator timestamp) with "this connection
-retransmitted" (proxy timestamp) is only valid if the two clocks agree. The
-collector endpoint (`GET /time`, `POST /aggregates`) is part of F5 and does not
-exist yet — until it does, a run with `--collector` logs the offset as
+`clock.ts` records the offset against the collector at run start. Correlating a
+generator timestamp with a proxy timestamp requires the two clocks to agree. The
+collector endpoints (`GET /time`, `POST /aggregates`) are part of F5 and do not
+exist yet — until they do, a run with `--collector` logs the offset as
 `unavailable` and continues with zero, which degrades cross-machine correlation
 rather than the load itself.
 
 ## Commands
 
-| Command                        | Purpose                                                   |
-| ------------------------------ | --------------------------------------------------------- |
-| `pnpm install`                 | Install workspace dependencies                            |
-| `pnpm typecheck`               | Typecheck all packages                                    |
-| `pnpm build`                   | Build all packages                                        |
-| `pnpm lint`                    | Lint all packages                                         |
-| `pnpm infra:up` / `infra:down` | Start/stop Docker services (**needs `sudo`** — see above) |
-| `node tools/verify-proxy-core.mjs` | Behavioural verification of the proxy core (needs `pnpm build` first) |
+| Command                          | Purpose                                                            |
+| -------------------------------- | ------------------------------------------------------------------ |
+| `pnpm install`                   | Install workspace dependencies                                     |
+| `pnpm typecheck`                 | Typecheck all packages                                             |
+| `pnpm build`                     | Build all packages                                                 |
+| `pnpm lint`                      | Lint all packages                                                  |
+| `pnpm infra:up` / `infra:down`   | Start/stop Docker services (**needs `sudo`** — see above)          |
 | `node stress-test/dist/index.js` | Run the load generator (needs `pnpm build` first; see flags above) |
 
 ## Continuous integration

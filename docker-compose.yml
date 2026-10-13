@@ -1,39 +1,23 @@
-# Postgres was cut from v1 — the capped Redis list (LPUSH + LTRIM 0 10000)
-# covers history. See issue #5.
-
 services:
   proxy:
-    # Context is the repo root: pnpm needs pnpm-workspace.yaml, pnpm-lock.yaml
-    # and the root package.json to resolve the workspace. A context of
-    # apps/proxy leaves the lockfile outside the build entirely.
     build:
       context: .
       dockerfile: apps/proxy/Dockerfile
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379
-      # Where the upstreams live, on the compose network. Without these the
-      # proxy falls back to its local defaults (127.0.0.1:3001) and every
-      # request 502s — inside a container, loopback is the container's own.
-      #
-      # UPSTREAM_HOST is the *service* name, not an address: `docker compose up
-      # --scale stub=3` gives it three A records on the compose network, and
-      # those resolved addresses are the round-robin instance list (A1's
-      # rotation proof). The count caps how many of them are used.
+
       UPSTREAM_HOST: stub
       UPSTREAM_PORT: 3001
       UPSTREAM_INSTANCES: 3
-    # NET_ADMIN grants network administration (interface config, tc traffic
-    # control) for netem and capture. Does NOT make the container root — the
-    # image drops to USER node.
+    # NET_ADMIN grants network administration Does NOT make the container root
     cap_add:
       - NET_ADMIN
     depends_on:
       redis:
         condition: service_healthy
     ports:
-      # Bound to loopback only. Laptop B reaches the proxy over a Tailscale
-      # tunnel rather than a LAN port-forward (see issue #12 / risk table).
+      # Bound to loopback only. Laptop B reaches the proxy over a Tailscale tunnel rather than a LAN portforward
       - "127.0.0.1:8080:8080"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -44,8 +28,7 @@ services:
 
   redis:
     image: redis:7
-    # expose, not ports: reachable from the compose network, NOT published to
-    # the host or LAN. Redis has no auth and no TLS by default — keep it here.
+    # expose, not ports: reachable from the compose network, NOT published to LAN.
     expose:
       - "6379"
     healthcheck:
@@ -63,16 +46,6 @@ services:
       redis:
         condition: service_healthy
     ports:
-      # Loopback only, and deliberately a single fixed port: the CI smoke test
-      # curls 127.0.0.1:3001/health directly.
-      #
-      # This mapping is what blocks `docker compose up --scale stub=3` (N
-      # replicas cannot share one host port) — A1's round-robin proof needs
-      # scaling, so that run needs the mapping dropped:
-      #   docker compose run --rm -d -p 3001 stub   # or override in a
-      #   compose.override.yml, then scale the service
-      # The proxy reaches upstreams over the compose network by service name, so
-      # no host port is needed for the proxy to load balance across instances.
       - "127.0.0.1:3001:3001"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
