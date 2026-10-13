@@ -70,8 +70,10 @@ export function forward(
   upstreamReq.on('response', (upstreamRes) => {
     const status = upstreamRes.statusCode ?? 502;
 
+    // Framing headers are safe to echo only because v1 never alters the body; A6/A8 rewrite bodies and must recompute them.
     res.writeHead(status, upstreamRes.statusMessage, stripHopByHop(upstreamRes.headers));
 
+    // A truncated upstream (the stub's /api/reset) must not become a response that never ends; destroy the client socket.
     upstreamRes.on('close', () => {
       if (!upstreamRes.complete) res.destroy();
     });
@@ -83,6 +85,7 @@ export function forward(
     res.on('finish', () => {
       settled(status);
     });
+    // Client hung up mid-response; the upstream teardown above handles it.
     res.on('error', () => {});
   });
 

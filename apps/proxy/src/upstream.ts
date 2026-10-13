@@ -57,6 +57,7 @@ export class RoundRobinPool {
       throw new Error(`upstream group "${this.group}" has no instances`);
     }
     const index = this.#cursor % this.#instances.length;
+    // Modulo bounds the index by construction; noUncheckedIndexedAccess needs the assertion.
     const instance = this.#instances[index];
     if (instance === undefined) {
       throw new Error(`round-robin index ${index} out of range for group "${this.group}"`);
