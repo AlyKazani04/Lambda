@@ -9,6 +9,7 @@ export interface RunConfig {
   workers: number;
   seed: number;
   collector: string | null;
+  reportIntervalMs: number;
   label: string;
   table: WeightedTable;
 }
@@ -20,6 +21,7 @@ export const DEFAULTS = {
   rampMs: 2_000,
   seed: 12345,
   workers: 0,
+  reportIntervalMs: 2_000,
 };
 
 export class UsageError extends Error { }
@@ -81,6 +83,12 @@ export function parseArgs(argv: string[]): RunConfig {
     intFlag(argv, 'workers', 0, { allowZero: true }) || availableParallelism();
   const seed = intFlag(argv, 'seed', DEFAULTS.seed, { allowZero: true });
   const collector = readFlag(argv, 'collector') ?? null;
+  const reportIntervalMs = intFlag(
+    argv,
+    'report-interval',
+    DEFAULTS.reportIntervalMs,
+    { allowZero: true },
+  );
   const label = readFlag(argv, 'label') ?? 'run';
 
   let parsed: URL;
@@ -103,6 +111,7 @@ export function parseArgs(argv: string[]): RunConfig {
     workers,
     seed,
     collector,
+    reportIntervalMs,
     label,
     table,
   };
@@ -118,7 +127,8 @@ stress-test — multi-threaded HTTP load generator
   --workers <n>         worker threads, 0 = CPU cores (default 0)
   --seed <n>            RNG seed, recorded in the report (default ${DEFAULTS.seed})
   --weights <list>      scenario overrides, e.g. like:20,follow:5
-  --collector <url>     POST aggregates here when the run ends
+  --collector <url>     POST aggregates here; omit to skip shipping
+  --report-interval <ms>  periodic report cadence, 0 = end of run only (default ${DEFAULTS.reportIntervalMs})
   --label <name>        run label carried in the report (default "run")
   --help                this text
 `.trim();

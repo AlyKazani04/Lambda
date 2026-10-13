@@ -29,7 +29,16 @@ if (parentPort === null) {
 }
 const port = parentPort;
 
-// Per-worker stream derived from the run seed: reproducible, and no two workers overlap.
+port.on('message', (message: { type?: string }) => {
+  if (message.type !== 'snapshot') return;
+  port.postMessage({
+    type: 'snapshot',
+    workerIndex: init.workerIndex,
+    report: currentReport(),
+  });
+});
+
+// Per worker stream derived from the run seed, reproducible
 const rng = rand((init.seed + init.workerIndex * 7919) >>> 0);
 const histogram = createHistogram();
 
@@ -64,7 +73,7 @@ async function fireOne(): Promise<void> {
   }
 }
 
-// Share of target concurrency climbs 1 -> ceiling over rampMs; 0 starts at ceiling.
+// Share of target concurrency climbs 1 -> ceiling over rampMs
 function shareAt(elapsedMs: number): number {
   const ceiling = Math.max(1, Math.round(init.concurrency / init.workerCount));
   if (init.rampMs <= 0) return ceiling;
@@ -98,7 +107,7 @@ async function run(): Promise<void> {
       });
     }
 
-    // Yield so the loop can service sockets; without this the while spins.
+    // Yield so the loop can service sockets. Without this the while loop spinss
     await new Promise((resolve) => setImmediate(resolve));
   }
 
@@ -107,15 +116,18 @@ async function run(): Promise<void> {
 
 await run();
 
-const report: WorkerReport = {
-  histogram: Array.from(histogram),
-  requests,
-  ok,
-  errors,
-  statusCounts,
-  scenarioCounts,
-  bytesIn,
-  bytesOut,
-};
+// Read at call time, so a snapshot mid run reflects what has been recorded so far
+function currentReport(): WorkerReport {
+  return {
+    histogram: Array.from(histogram),
+    requests,
+    ok,
+    errors,
+    statusCounts: { ...statusCounts },
+    scenarioCounts: { ...scenarioCounts },
+    bytesIn,
+    bytesOut,
+  };
+}
 
-port.postMessage({ type: 'done', workerIndex: init.workerIndex, report });
+port.postMessage({ type: 'done', workerIndex: init.workerIndex, report: currentReport() });

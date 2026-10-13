@@ -20,6 +20,10 @@ function printSummary(summary: RunSummary): void {
   console.log(`ramp            ${summary.rampMs}ms`);
   console.log(`duration        ${(summary.elapsedMs / 1000).toFixed(1)}s`);
   console.log(`started         ${summary.startedAt}`);
+  console.log(`loop mode       ${summary.loop}-loop` +
+    (summary.loop === 'closed'
+      ? ' (in-flight capped; a slow server throttles the generator, so P99 is understated)'
+      : ''));
   console.log(`clock offset    ${summary.clock.offsetMs.toFixed(1)}ms ` + `(rtt ${summary.clock.rttMs}ms, ${summary.clock.source})`);
 
   console.log('\n--- throughput ---');

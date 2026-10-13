@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads';
+
 import {
   createHistogram,
   merge,
@@ -8,7 +9,10 @@ import {
 } from './aggregator.js';
 import type { RunConfig } from './config.js';
 import type { ClockOffset } from './clock.js';
+import { report } from './reporter.js';
 import type { WeightedTable } from './scenarios.js';
+
+export type LoopMode = 'closed' | 'open';
 
 export interface RunSummary {
   label: string;
@@ -31,27 +35,32 @@ export interface RunSummary {
   latency: LatencySummary;
   clock: ClockOffset;
   scenarioMix: Record<string, number>;
+  // Closed-loop caps in-flight requests, so a slow server throttles the generator. Stated explicitly
+  loop: LoopMode;
   table: WeightedTable;
 }
 
 interface WorkerMessage {
-  type: 'progress' | 'done';
+  type: 'progress' | 'done' | 'snapshot';
   workerIndex: number;
   concurrency?: number;
   requests?: number;
   report?: WorkerReport;
 }
 
+interface SpawnedWorker {
+  worker: Worker;
+  ready: Promise<void>;
+  done: Promise<WorkerReport>;
+  snapshot: () => Promise<WorkerReport | null>;
+}
+
 function workerUrl(): URL {
   return new URL('./worker.js', import.meta.url);
 }
 
-// All workers ready before startAt, so thread startup is never in the timing window.
-function spawnWorker(config: RunConfig, index: number, startAt: number): {
-  worker: Worker;
-  ready: Promise<void>;
-  done: Promise<WorkerReport>;
-} {
+// All workers ready before startAt, so thread startup is never in the timing window
+function spawnWorker(config: RunConfig, index: number, startAt: number): SpawnedWorker {
   const worker = new Worker(workerUrl(), {
     workerData: {
       target: config.target,
@@ -71,12 +80,19 @@ function spawnWorker(config: RunConfig, index: number, startAt: number): {
     resolveReady = resolve;
   });
 
+  let resolveSnapshot: ((report: WorkerReport | null) => void) | null = null;
+
   const done = new Promise<WorkerReport>((resolve, reject) => {
     worker.on('message', (message: WorkerMessage) => {
       if (message.type === 'progress') {
         console.log(
           `  [worker ${message.workerIndex}] concurrency=${message.concurrency} requests=${message.requests}`,
         );
+        return;
+      }
+      if (message.type === 'snapshot' && resolveSnapshot !== null) {
+        resolveSnapshot(message.report ?? null);
+        resolveSnapshot = null;
         return;
       }
       if (message.type === 'done' && message.report !== undefined) {
@@ -92,7 +108,103 @@ function spawnWorker(config: RunConfig, index: number, startAt: number): {
   // online triggers on thread up, before startAt releases it
   worker.on('online', () => resolveReady());
 
-  return { worker, ready, done };
+  const snapshot = (): Promise<WorkerReport | null> =>
+    new Promise((resolve) => {
+      // A worker already past its deadline will not answer; time out and drop it.
+      const timer = setTimeout(() => {
+        resolveSnapshot = null;
+        resolve(null);
+      }, 2000);
+      resolveSnapshot = (report) => {
+        clearTimeout(timer);
+        resolve(report);
+      };
+      worker.postMessage({ type: 'snapshot' });
+    });
+
+  return { worker, ready, done, snapshot };
+}
+
+interface Tally {
+  requests: number;
+  ok: number;
+  errors: number;
+  bytesIn: number;
+  bytesOut: number;
+  statusCounts: Record<string, number>;
+  scenarioCounts: Record<string, number>;
+  histogram: Int32Array;
+}
+
+function emptyTally(): Tally {
+  return {
+    requests: 0,
+    ok: 0,
+    errors: 0,
+    bytesIn: 0,
+    bytesOut: 0,
+    statusCounts: {},
+    scenarioCounts: {},
+    histogram: createHistogram(),
+  };
+}
+
+function fold(tally: Tally, reports: ReadonlyArray<WorkerReport>): Tally {
+  for (const report of reports) {
+    merge(tally.histogram, Int32Array.from(report.histogram));
+    tally.requests += report.requests;
+    tally.ok += report.ok;
+    tally.errors += report.errors;
+    tally.bytesIn += report.bytesIn;
+    tally.bytesOut += report.bytesOut;
+    for (const [status, count] of Object.entries(report.statusCounts)) {
+      tally.statusCounts[status] = (tally.statusCounts[status] ?? 0) + count;
+    }
+    for (const [name, count] of Object.entries(report.scenarioCounts)) {
+      tally.scenarioCounts[name] = (tally.scenarioCounts[name] ?? 0) + count;
+    }
+  }
+  return tally;
+}
+
+function toSummary(
+  config: RunConfig,
+  clock: ClockOffset,
+  tally: Tally,
+  startedAt: string,
+  elapsedMs: number,
+): RunSummary {
+  const seconds = Math.max(elapsedMs, 1) / 1000;
+
+  return {
+    label: config.label,
+    target: config.target,
+    seed: config.seed,
+    workers: config.workers,
+    concurrency: config.concurrency,
+    rampMs: config.rampMs,
+    durationMs: config.durationMs,
+    startedAt,
+    elapsedMs,
+    requests: tally.requests,
+    ok: tally.ok,
+    errors: tally.errors,
+    errorRate: tally.requests === 0 ? 0 : tally.errors / tally.requests,
+    requestsPerSecond: tally.requests / seconds,
+    statusCounts: tally.statusCounts,
+    bytesIn: tally.bytesIn,
+    bytesOut: tally.bytesOut,
+    latency: summarize(tally.histogram),
+    clock,
+    scenarioMix: Object.fromEntries(
+      Object.entries(tally.scenarioCounts).map(([name, count]) => [
+        name,
+        tally.requests === 0 ? 0 : (count / tally.requests) * 100,
+      ]),
+    ),
+    loop: 'closed',
+    table: config.table,
+  };
 }
 
 export async function runLoad(
@@ -101,6 +213,7 @@ export async function runLoad(
 ): Promise<RunSummary> {
   // Workers wait until startAt
   const startAt = Date.now() + 500;
+  const startedAt = new Date(startAt).toISOString();
 
   const workers = Array.from({ length: config.workers }, (_, index) =>
     spawnWorker(config, index, startAt),
@@ -113,62 +226,44 @@ export async function runLoad(
     `duration ${config.durationMs}ms, ramp ${config.rampMs}ms, seed ${config.seed}`,
   );
 
+  // Periodic progress reports, so the collector sees the run build up
+  let stopReporting = false;
+  const reportingLoop = (async () => {
+    if (config.collector === null || config.reportIntervalMs <= 0) return;
+
+    while (!stopReporting) {
+      await new Promise((resolve) => setTimeout(resolve, config.reportIntervalMs));
+      if (stopReporting) return;
+
+      const snaps = await Promise.all(workers.map((w) => w.snapshot()));
+      const reports = snaps.filter((r): r is WorkerReport => r !== null);
+      if (reports.length === 0) continue;
+
+      const summary = toSummary(
+        config,
+        clock,
+        fold(emptyTally(), reports),
+        startedAt,
+        Date.now() - startAt,
+      );
+      const ok = await report(summary, config.collector, 'progress', true);
+      console.log(
+        `  progress report: ${summary.requests} requests, ` +
+        `${summary.requestsPerSecond.toFixed(0)} req/s${ok ? '' : ' (not delivered)'}`,
+      );
+    }
+  })();
+
   const reports = await Promise.all(workers.map((w) => w.done));
+  stopReporting = true;
+  await reportingLoop;
   await Promise.all(workers.map((w) => w.worker.terminate()));
 
-  const merged = createHistogram();
-  let requests = 0;
-  let ok = 0;
-  let errors = 0;
-  let bytesIn = 0;
-  let bytesOut = 0;
-  const statusCounts: Record<string, number> = {};
-  const scenarioCounts: Record<string, number> = {};
-
-  for (const report of reports) {
-    merge(merged, Int32Array.from(report.histogram));
-    requests += report.requests;
-    ok += report.ok;
-    errors += report.errors;
-    bytesIn += report.bytesIn;
-    bytesOut += report.bytesOut;
-    for (const [status, count] of Object.entries(report.statusCounts)) {
-      statusCounts[status] = (statusCounts[status] ?? 0) + count;
-    }
-    for (const [name, count] of Object.entries(report.scenarioCounts)) {
-      scenarioCounts[name] = (scenarioCounts[name] ?? 0) + count;
-    }
-  }
-
-  const elapsedMs = config.durationMs;
-  const startedAt = new Date(startAt).toISOString();
-
-  return {
-    label: config.label,
-    target: config.target,
-    seed: config.seed,
-    workers: config.workers,
-    concurrency: config.concurrency,
-    rampMs: config.rampMs,
-    durationMs: config.durationMs,
-    startedAt,
-    elapsedMs,
-    requests,
-    ok,
-    errors,
-    errorRate: requests === 0 ? 0 : errors / requests,
-    requestsPerSecond: requests / (elapsedMs / 1000),
-    statusCounts,
-    bytesIn,
-    bytesOut,
-    latency: summarize(merged),
+  return toSummary(
+    config,
     clock,
-    scenarioMix: Object.fromEntries(
-      Object.entries(scenarioCounts).map(([name, count]) => [
-        name,
-        requests === 0 ? 0 : (count / requests) * 100,
-      ]),
-    ),
-    table: config.table,
-  };
+    fold(emptyTally(), reports),
+    startedAt,
+    config.durationMs,
+  );
 }
