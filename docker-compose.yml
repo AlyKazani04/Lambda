@@ -13,8 +13,11 @@ services:
     # NET_ADMIN grants network administration Does NOT make the container root
     cap_add:
       - NET_ADMIN
+    restart: unless-stopped
     depends_on:
       redis:
+        condition: service_healthy
+      stub:
         condition: service_healthy
     ports:
       # Bound to loopback only. Laptop B reaches the proxy over a Tailscale tunnel rather than a LAN portforward
