@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { loadConfig } from './config.js';
+import { startCapture } from './l4/capture.js';
 import { forward } from './forwarder.js';
 import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
@@ -10,6 +11,11 @@ const config = loadConfig();
 
 const pools = await createPools(config);
 const discovery = startDiscovery(config, pools);
+
+// L4 capture (B1). Disabled when CAPTURE_IFACE is empty.
+const capture = config.captureIface
+  ? startCapture({ iface: config.captureIface, proxyPort: config.port, onPacket: () => {} })
+  : null;
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -77,6 +83,7 @@ const server = createServer(handleRequest);
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     discovery.stop();
+    capture?.stop();
     server.close(() => process.exit(0));
   });
 }

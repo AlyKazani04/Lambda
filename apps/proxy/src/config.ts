@@ -18,6 +18,8 @@ export interface ProxyConfig {
   upstreamHost: string;
   upstreamPort: number;
   instanceCount: number;
+  captureIface: string;
+
   discoveryIntervalMs: number;
 }
 
@@ -141,6 +143,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     upstreamHost: env.UPSTREAM_HOST ?? DEFAULT_UPSTREAM_HOST,
     upstreamPort: readInt(env, 'UPSTREAM_PORT', DEFAULT_UPSTREAM_PORT),
     instanceCount: readInt(env, 'UPSTREAM_INSTANCES', DEFAULT_INSTANCE_COUNT),
+    captureIface: (env.CAPTURE_IFACE ?? '').trim(),
     discoveryIntervalMs: readNonNegativeInt(
       env,
       'UPSTREAM_DISCOVERY_INTERVAL_MS',
