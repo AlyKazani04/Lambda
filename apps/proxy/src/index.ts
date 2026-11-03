@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { loadConfig } from './config.js';
 import { startCapture } from './l4/capture.js';
+import { parsePacket } from './l4/packet-parser.js';
 import { forward } from './forwarder.js';
 import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
@@ -13,8 +14,37 @@ const pools = await createPools(config);
 const discovery = startDiscovery(config, pools);
 
 // L4 capture (B1). Disabled when CAPTURE_IFACE is empty.
+let parsedSampleCount = 0;
 const capture = config.captureIface
-  ? startCapture({ iface: config.captureIface, proxyPort: config.port, onPacket: () => {} })
+  ? startCapture({
+    iface: config.captureIface,
+    proxyPort: config.port,
+    onPacket: (packet) => {
+      const parsed = parsePacket({
+        bytes: packet.bytes,
+        timestamp: packet.timestamp,
+        capturedLength: packet.capturedLength,
+        originalLength: packet.originalLength,
+        linkType: packet.linkType,
+      });
+
+      if (parsed === null) {
+        console.log("Nothing parsed.");
+        return;
+      }
+
+      if (parsedSampleCount < 5) {
+        parsedSampleCount += 1;
+        console.log(
+          `parsed #${parsedSampleCount} ${parsed.fiveTuple.srcIp}:${parsed.fiveTuple.srcPort} -> ` +
+          `${parsed.fiveTuple.dstIp}:${parsed.fiveTuple.dstPort} ` +
+          `flags=${parsed.tcp.flags.raw.toString(16)} seq=${parsed.tcp.seq} ack=${parsed.tcp.ack} ` +
+          `win=${parsed.tcp.window} scale=${parsed.tcp.options.windowScale ?? '-'} ` +
+          `mss=${parsed.tcp.options.mss ?? '-'} ts=${parsed.tcp.options.timestamps?.tsVal ?? '-'}`,
+        );
+      }
+    },
+  })
   : null;
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -98,7 +128,7 @@ server.listen(config.port, config.host, () => {
     .join(' ');
   console.log(
     `proxy listening on ${config.host}:${config.port} ` +
-      `routes=[${config.routes.map((r) => `${r.prefix}->${r.group}`).join(', ')}] ` +
-      `upstreams: ${groups}`,
+    `routes=[${config.routes.map((r) => `${r.prefix}->${r.group}`).join(', ')}] ` +
+    `upstreams: ${groups}`,
   );
 });

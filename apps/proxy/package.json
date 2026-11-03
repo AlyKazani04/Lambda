@@ -15,7 +15,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@audc/pcap": "^4.2.0"
+    "@audc/pcap": "^4.2.0",
+    "shared-types": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

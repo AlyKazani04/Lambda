@@ -11,12 +11,13 @@ WORKDIR /repo
 
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/config/ ./packages/config/
+COPY packages/shared-types/ ./packages/shared-types/
 COPY apps/proxy/ ./apps/proxy/
 
 # --frozen-lockfile: fail rather than silently mutate the lockfile.
 RUN pnpm install --frozen-lockfile
 
-RUN pnpm --filter proxy run build
+RUN pnpm --filter shared-types run build && pnpm --filter proxy run build
 
 # ---- runtime stage -----------------------------------------------------
 FROM node:26-slim AS runner
@@ -30,6 +31,7 @@ WORKDIR /repo
 # Re-resolve production deps from the same lockfile
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/config/ ./packages/config/
+COPY packages/shared-types/package.json ./packages/shared-types/
 COPY apps/proxy/package.json ./apps/proxy/
 
 RUN npm install -g pnpm@12.6.0 \
@@ -37,6 +39,7 @@ RUN npm install -g pnpm@12.6.0 \
     && pnpm store prune
 
 COPY --from=builder --chown=node:node /repo/apps/proxy/dist ./apps/proxy/dist
+COPY --from=builder --chown=node:node /repo/packages/shared-types/dist ./packages/shared-types/dist
 
 # Drop root
 USER node
