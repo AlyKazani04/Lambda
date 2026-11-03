@@ -18,15 +18,24 @@ const discovery = startDiscovery(config, pools);
 let parsedSampleCount = 0;
 
 const pcapPath = (process.env.PCAP_EXPORT_PATH ?? 'capture.pcap').trim();
-const pcapWriter = config.captureIface && pcapPath !== ''
-  ? createPcapWriter({ path: pcapPath, linkType: 1 })
-  : null;
+
+let pcapWriter: ReturnType<typeof createPcapWriter> | null = null;
 
 const capture = config.captureIface
   ? startCapture({
     iface: config.captureIface,
     proxyPort: config.port,
     onPacket: (packet) => {
+      if (pcapPath !== '' && pcapWriter === null) {
+        const linkType = typeof packet.linkType === 'number'
+          ? packet.linkType
+          : packet.linkType === 'LINKTYPE_ETHERNET' ? 1
+          : packet.linkType === 'LINKTYPE_RAW' ? 101
+          : packet.linkType === 'LINKTYPE_LINUX_SLL' ? 113
+          : packet.linkType === 'LINKTYPE_NULL' ? 0
+          : 1;
+        pcapWriter = createPcapWriter({ path: pcapPath, linkType });
+      }
       pcapWriter?.write(packet);
       const parsed = parsePacket({
         bytes: packet.bytes,
@@ -119,7 +128,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     discovery.stop();
     capture?.stop();
-    void pcapWriter?.close().finally(() => server.close(() => process.exit(0)));
+    void (pcapWriter ? pcapWriter.close() : Promise.resolve()).finally(() => server.close(() => process.exit(0)));
   });
 }
 
