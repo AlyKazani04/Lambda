@@ -27,6 +27,11 @@ export class PcapWriter {
 
     this.stream = createWriteStream(this.path, { flags: 'w' });
 
+    this.stream.on('error', (error: NodeJS.ErrnoException) => {
+      this.closed = true;
+      this.log(`pcap writer error: ${error.message}`);
+    });
+
     // Global header — exactly 24 bytes.
     const globalHeader = Buffer.alloc(24);
     globalHeader.writeUInt32LE(0xa1b2c3d4, 0); // magic (little-endian variant)
@@ -59,6 +64,7 @@ export class PcapWriter {
     header.writeUInt32LE(inclLen, 8);
     header.writeUInt32LE(origLen, 12);
 
+    if (this.closed) return;
     this.stream.write(header);
     if (inclLen > 0) {
       this.stream.write(packet.bytes.subarray(0, inclLen));
