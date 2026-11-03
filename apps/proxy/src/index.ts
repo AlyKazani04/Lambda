@@ -4,6 +4,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { loadConfig } from './config.js';
 import { startCapture } from './l4/capture.js';
 import { parsePacket } from './l4/packet-parser.js';
+import { createPcapWriter } from './l4/pcap-writer.js';
 import { forward } from './forwarder.js';
 import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
@@ -15,11 +16,18 @@ const discovery = startDiscovery(config, pools);
 
 // L4 capture (B1). Disabled when CAPTURE_IFACE is empty.
 let parsedSampleCount = 0;
+
+const pcapPath = (process.env.PCAP_EXPORT_PATH ?? 'capture.pcap').trim();
+const pcapWriter = config.captureIface && pcapPath !== ''
+  ? createPcapWriter({ path: pcapPath, linkType: 1 })
+  : null;
+
 const capture = config.captureIface
   ? startCapture({
     iface: config.captureIface,
     proxyPort: config.port,
     onPacket: (packet) => {
+      pcapWriter?.write(packet);
       const parsed = parsePacket({
         bytes: packet.bytes,
         timestamp: packet.timestamp,
@@ -28,10 +36,7 @@ const capture = config.captureIface
         linkType: packet.linkType,
       });
 
-      if (parsed === null) {
-        console.log("Nothing parsed.");
-        return;
-      }
+      if (parsed === null) return;
 
       if (parsedSampleCount < 5) {
         parsedSampleCount += 1;
@@ -114,7 +119,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     discovery.stop();
     capture?.stop();
-    server.close(() => process.exit(0));
+    void pcapWriter?.close().finally(() => server.close(() => process.exit(0)));
   });
 }
 
