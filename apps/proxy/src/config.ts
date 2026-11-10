@@ -1,5 +1,7 @@
 // Proxy configuration (F2 / A1).
 
+import { DEFAULT_HISTORY_LIMIT } from 'shared-types';
+
 export interface UpstreamTarget {
   host: string;
   port: number;
@@ -21,6 +23,10 @@ export interface ProxyConfig {
   captureIface: string;
 
   discoveryIntervalMs: number;
+  /** Redis URL for the frame/TCP pub-sub bus. */
+  redisUrl: string;
+  /** Capped history list length. */
+  historyLimit: number;
 }
 
 export const DEFAULT_ROUTES: readonly Route[] = [
@@ -33,6 +39,7 @@ export const DEFAULT_UPSTREAM_HOST = '127.0.0.1';
 export const DEFAULT_UPSTREAM_PORT = 3001;
 export const DEFAULT_INSTANCE_COUNT = 3;
 export const DEFAULT_DISCOVERY_INTERVAL_MS = 5000;
+export const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
 
 const TARGETS_ENV_PREFIX = 'UPSTREAM_TARGETS_';
 
@@ -149,5 +156,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
       'UPSTREAM_DISCOVERY_INTERVAL_MS',
       DEFAULT_DISCOVERY_INTERVAL_MS,
     ),
+    redisUrl: env.REDIS_URL ?? DEFAULT_REDIS_URL,
+    historyLimit: readInt(env, 'HISTORY_LIMIT', DEFAULT_HISTORY_LIMIT),
   };
 }

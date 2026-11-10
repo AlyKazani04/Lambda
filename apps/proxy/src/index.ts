@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { loadConfig } from './config.js';
+import { createFrameBus } from './bus/redis.js';
 import { startCapture } from './l4/capture.js';
 import { parsePacket } from './l4/packet-parser.js';
 import { createPcapWriter } from './l4/pcap-writer.js';
@@ -10,6 +11,7 @@ import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
 
 const config = loadConfig();
+const bus = createFrameBus({ url: config.redisUrl, historyLimit: config.historyLimit });
 
 const pools = await createPools(config);
 const discovery = startDiscovery(config, pools);
@@ -128,6 +130,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     discovery.stop();
     capture?.stop();
+    void bus.close();
     void (pcapWriter ? pcapWriter.close() : Promise.resolve()).finally(() => server.close(() => process.exit(0)));
   });
 }

@@ -3,16 +3,17 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/.next/**', '**/*.pcap'],
+    ignores: ['**/dist/**', '**/node_modules/**', '**/.next/**', '**/*.pcap', '**/next-env.d.ts'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['**/*.ts'],
+    files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
       parserOptions: {
         ecmaVersion: 2023,
         sourceType: 'module',
+        ecmaFeatures: { jsx: true },
       },
     },
     rules: {

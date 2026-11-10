@@ -4,8 +4,11 @@
   "description": "L7 reverse proxy with L4 packet capture (Lambda)",
   "main": "dist/index.js",
   "scripts": {
+    "predev": "pnpm --filter shared-types run build",
     "dev": "tsx src/index.ts",
+    "prebuild": "pnpm --filter shared-types run build",
     "build": "tsc -p tsconfig.json",
+    "pretypecheck": "pnpm --filter shared-types run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
     "start": "node dist/index.js"
@@ -16,7 +19,8 @@
   "type": "module",
   "dependencies": {
     "@audc/pcap": "^4.2.0",
-    "shared-types": "workspace:*"
+    "shared-types": "workspace:*",
+    "ioredis": "^5.4.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
