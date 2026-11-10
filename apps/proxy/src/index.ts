@@ -9,6 +9,8 @@ import { createPcapWriter } from './l4/pcap-writer.js';
 import { forward } from './forwarder.js';
 import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
+import { resolveTraceId } from './correlation/trace-id.js';
+import { createFrameRecorder } from './l7/frame-logger.js';
 
 const config = loadConfig();
 const bus = createFrameBus({ url: config.redisUrl, historyLimit: config.historyLimit });
@@ -119,8 +121,23 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
     `upstream=${instance.id} group=${route.group} ${req.method} ${req.url}`,
   );
 
-  forward(req, res, instance, ({ status }) => {
-    console.log(`upstream=${instance.id} status=${status} ${req.method} ${req.url}`);
+  const traceId = resolveTraceId(req);
+  const recorder = createFrameRecorder(req, {
+    bus,
+    traceId,
+    method: req.method ?? 'GET',
+    path: req.url ?? '/',
+    group: route.group,
+    upstream: instance.id,
+  });
+
+  forward(req, res, instance, {
+    traceId,
+    onUpstreamResponse: recorder.onUpstreamResponse,
+    onSettled: ({ status }) => {
+      recorder.finish(status);
+      console.log(`upstream=${instance.id} status=${status} ${req.method} ${req.url}`);
+    },
   });
 }
 
