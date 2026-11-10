@@ -45,22 +45,41 @@ export interface ForwardOutcome {
   status: number;
 }
 
+export interface ForwardOptions {
+  /** Trace ID propagated upstream and echoed back on the response. */
+  traceId?: string;
+  /** Fires once with the status written to the client. */
+  onSettled?: (outcome: ForwardOutcome) => void;
+  /** Fires when the upstream response headers arrive. */
+  onUpstreamResponse?: (upstreamRes: IncomingMessage) => void;
+}
+
+/**
+ * Forward `req` to `instance` and pipe the upstream response back.
+ *
+ * `onSettled` fires once with the status written to the client, so the caller
+ * can log the outcome without this module knowing anything about logging.
+ */
 export function forward(
   req: IncomingMessage,
   res: ServerResponse,
   instance: UpstreamInstance,
-  onSettled?: (outcome: ForwardOutcome) => void,
+  options?: ForwardOptions,
 ): void {
+  const traceId = options?.traceId;
   const settled = (status: number): void => {
-    onSettled?.({ status });
+    options?.onSettled?.({ status });
   };
+
+  const upstreamHeaders = stripHopByHop(req.headers);
+  if (traceId !== undefined) upstreamHeaders['x-request-id'] = traceId;
 
   const upstreamReq = httpRequest({
     host: instance.host,
     port: instance.port,
     method: req.method,
     path: req.url,
-    headers: stripHopByHop(req.headers),
+    headers: upstreamHeaders,
   });
 
   res.on('close', () => {
@@ -69,9 +88,12 @@ export function forward(
 
   upstreamReq.on('response', (upstreamRes) => {
     const status = upstreamRes.statusCode ?? 502;
+    options?.onUpstreamResponse?.(upstreamRes);
 
     // Framing headers are safe to echo only because v1 never alters the body; A6/A8 rewrite bodies and must recompute them.
-    res.writeHead(status, upstreamRes.statusMessage, stripHopByHop(upstreamRes.headers));
+    const responseHeaders = stripHopByHop(upstreamRes.headers);
+    if (traceId !== undefined) responseHeaders['x-request-id'] = traceId;
+    res.writeHead(status, upstreamRes.statusMessage, responseHeaders);
 
     // A truncated upstream (the stub's /api/reset) must not become a response that never ends; destroy the client socket.
     upstreamRes.on('close', () => {
@@ -106,10 +128,12 @@ export function forward(
       upstream: instance.id,
       message: error.message,
     });
-    res.writeHead(502, {
+    const errorHeaders: OutgoingHttpHeaders = {
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(body),
-    });
+    };
+    if (traceId !== undefined) errorHeaders['x-request-id'] = traceId;
+    res.writeHead(502, errorHeaders);
     res.end(body);
     settled(502);
   });
