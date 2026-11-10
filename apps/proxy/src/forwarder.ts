@@ -9,6 +9,11 @@ import type {
 } from 'node:http';
 
 import type { UpstreamInstance } from './upstream.js';
+import {
+  clientWantsClose,
+  responseWantsClose,
+  stripBodylessHeaders,
+} from './l7/http-parse.js';
 
 // Hop-by-hop headers (RFC 9110 §7.6.1) — describe the current connection, not
 // the message. Forwarding them corrupts the next hop under keep-alive.
@@ -52,6 +57,8 @@ export interface ForwardOptions {
   onSettled?: (outcome: ForwardOutcome) => void;
   /** Fires when the upstream response headers arrive. */
   onUpstreamResponse?: (upstreamRes: IncomingMessage) => void;
+  /** Fires when the upstream sends 100 Continue, so it can be relayed. */
+  onUpstreamContinue?: () => void;
 }
 
 /**
@@ -71,8 +78,12 @@ export function forward(
     options?.onSettled?.({ status });
   };
 
+  const closeUpstream = clientWantsClose(req);
   const upstreamHeaders = stripHopByHop(req.headers);
   if (traceId !== undefined) upstreamHeaders['x-request-id'] = traceId;
+  // Relay the client's close request upstream so the upstream connection is
+  // not kept alive for a client that will not reuse it.
+  if (closeUpstream) upstreamHeaders['connection'] = 'close';
 
   const upstreamReq = httpRequest({
     host: instance.host,
@@ -82,6 +93,15 @@ export function forward(
     headers: upstreamHeaders,
   });
 
+  // The upstream's 100 Continue is an interim response on the way to the final
+  // one. The caller relays it so the client sends its body.
+  upstreamReq.on('continue', () => {
+    options?.onUpstreamContinue?.();
+  });
+
+  // A client that goes away mid-request must take the upstream request with it,
+  // or the socket stays open until the file-descriptor limit is reached. `res`
+  // emits 'close' on both finish and abort; writableFinished tells them apart.
   res.on('close', () => {
     if (!res.writableFinished) upstreamReq.destroy();
   });
@@ -93,7 +113,28 @@ export function forward(
     // Framing headers are safe to echo only because v1 never alters the body; A6/A8 rewrite bodies and must recompute them.
     const responseHeaders = stripHopByHop(upstreamRes.headers);
     if (traceId !== undefined) responseHeaders['x-request-id'] = traceId;
-    res.writeHead(status, upstreamRes.statusMessage, responseHeaders);
+    // Trailer is hop-by-hop, so stripHopByHop drops it; re-add it because the
+    // proxy re-emits the trailers after the body.
+    const trailer = upstreamRes.headers['trailer'];
+    if (trailer !== undefined) responseHeaders['trailer'] = trailer;
+    const finalHeaders = stripBodylessHeaders(responseHeaders, status, req.method ?? 'GET');
+    // An upstream close must reach the client: the proxy cannot reuse the
+    // upstream connection, so keeping the client connection open would only
+    // invite a request onto a socket the upstream has discarded.
+    if (closeUpstream || responseWantsClose(upstreamRes.headers)) {
+      finalHeaders['connection'] = 'close';
+    }
+    res.writeHead(status, upstreamRes.statusMessage, finalHeaders);
+
+    // Node's client exposes trailers on `res.trailers` once the body is read
+    // rather than emitting a 'trailers' event, so re-emit them before the pipe
+    // ends the response.
+    upstreamRes.on('end', () => {
+      const trailers = upstreamRes.trailers;
+      if (trailers !== undefined && Object.keys(trailers).length > 0 && !res.writableEnded) {
+        res.addTrailers({ ...trailers });
+      }
+    });
 
     // A truncated upstream (the stub's /api/reset) must not become a response that never ends; destroy the client socket.
     upstreamRes.on('close', () => {
