@@ -85,7 +85,15 @@ function handleHealth(res: ServerResponse): void {
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse): void {
+interface RequestOptions {
+  expectContinue?: boolean;
+}
+
+function handleRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: RequestOptions = {},
+): void {
   const pathname = pathnameOf(req.url);
 
   if (pathname === '/health' || pathname === '/health/') {
@@ -134,6 +142,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
   forward(req, res, instance, {
     traceId,
     onUpstreamResponse: recorder.onUpstreamResponse,
+    // Relay the upstream's interim 100 so the client sends its body. Guarded
+    // by headersSent: if the upstream answered with a final status instead,
+    // writeContinue after writeHead would throw.
+    onUpstreamContinue: options.expectContinue
+      ? () => {
+          if (!res.headersSent) res.writeContinue();
+        }
+      : undefined,
     onSettled: ({ status }) => {
       recorder.finish(status);
       console.log(`upstream=${instance.id} status=${status} ${req.method} ${req.url}`);
@@ -143,6 +159,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 
 const server = createServer(handleRequest);
 
+// A request with Expect: 100-continue arrives here instead of 'request'. The
+// proxy forwards the expectation upstream and relays the interim 100 back.
+server.on('checkContinue', (req, res) => {
+  handleRequest(req, res, { expectContinue: true });
+});
+
+// Discovery runs on a timer; stop it explicitly so a SIGTERM leaves nothing behind.
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     discovery.stop();
