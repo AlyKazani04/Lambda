@@ -116,6 +116,61 @@ Two gotchas worth knowing before you debug a rotation that never advances:
   replica count, the surplus replicas are simply never selected — nothing warns
   you, because from the proxy's side the list is exactly as configured.
 
+## L4 handshake analysis (B3)
+
+`apps/proxy/src/l4/` holds the transport-layer work:
+
+| File               | Responsibility                                            |
+| ------------------ | --------------------------------------------------------- |
+| `capture.ts`       | B1 — `@audc/pcap` session on the physical NIC             |
+| `packet-parser.ts` | B2 — Ethernet/IPv4/TCP decode, flags, seq/ack, options    |
+| `handshake.ts`     | B3 — SYN → SYN-ACK → ACK deltas per 5-tuple               |
+| `pcap-writer.ts`   | B9 — 24-byte global header + 16-byte per-packet header    |
+
+`handshake.ts` keeps one record per connection, keyed by the direction-insensitive
+endpoint pair so the SYN and the SYN-ACK land on the same record. It verifies the
+ACK numbers (the SYN-ACK must acknowledge SYN+1; the final ACK must acknowledge
+SYN-ACK+1), counts retransmitted SYNs without treating them as new connections,
+and expires in-progress connections that never complete. Results leave through a
+`HandshakePublisher` port:
+
+- `publishConnection` — one event per completed handshake
+- `publishAggregate` — completed/in-progress/stale counts, ACK-mismatch counters,
+  and min/max/mean/p50/p95/p99 for the total and RTT-estimate timings
+
+`rttEstimateMs` is `totalMs / 2`. It is an **estimate**, not a measurement: it
+assumes a symmetric path, which real WiFi/LAN paths are not. B5's per-packet RTT
+estimation does not rely on that assumption.
+
+Until the Redis transport (F5) merges, `createConsoleHandshakePublisher` prints
+one line per handshake and one aggregate line per second:
+
+```text
+handshake 127.0.0.1:37364>127.0.0.1:8080 syn→synack=0ms synack→ack=0ms total=0ms rtt≈0.0ms retrans=0
+handshake-aggregate completed=2 inProgress=0 stale=0 rtt p50=0.0 p95=0.0 p99=0.0 max=0.0
+```
+
+### Verifying B3
+
+```bash
+pnpm test                                          # unit tests over synthetic frames
+tools/handshake-replay.sh apps/proxy/capture.pcap  # replay a real capture
+```
+
+The replay tool needs no capture privileges: it reads the `.pcap` the proxy
+already writes and runs the same decode + analyse path, so a netem run can be
+evaluated offline and reproducibly. To validate against injected delay:
+
+1. Start the stack and confirm the proxy is capturing (`capture ... pps=`).
+2. `sudo tools/netem-up.sh "$CAPTURE_IFACE" wan` — 20 ms ± 5 ms.
+3. Drive traffic through the proxy from the second machine.
+4. `tools/handshake-replay.sh apps/proxy/capture.pcap` — RTT p50 should be
+   ~20 ms, not ~2 ms.
+5. `sudo tools/netem-down.sh "$CAPTURE_IFACE"`.
+
+The live dashboard view is deferred until the Redis transport (F5) merges; the
+publisher port is the seam it plugs into.
+
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and

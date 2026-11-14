@@ -5,6 +5,7 @@ import { loadConfig } from './config.js';
 import { startCapture } from './l4/capture.js';
 import { parsePacket } from './l4/packet-parser.js';
 import { createPcapWriter } from './l4/pcap-writer.js';
+import { createConsoleHandshakePublisher, HandshakeAnalyser } from './l4/handshake.js';
 import { forward } from './forwarder.js';
 import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
@@ -20,6 +21,14 @@ let parsedSampleCount = 0;
 const pcapPath = (process.env.PCAP_EXPORT_PATH ?? 'capture.pcap').trim();
 
 let pcapWriter: ReturnType<typeof createPcapWriter> | null = null;
+
+// L4 handshake analyser (B3). Fed from the capture path, publishes one result
+// per completed SYN → SYN-ACK → ACK plus an aggregate on every sweep. The
+// dashboard bus adapter lands with the Redis transport; until then the console
+// publisher makes the analyser observable in the proxy log.
+const handshake = new HandshakeAnalyser({
+  publisher: createConsoleHandshakePublisher(),
+});
 
 const capture = config.captureIface
   ? startCapture({
@@ -46,6 +55,8 @@ const capture = config.captureIface
       });
 
       if (parsed === null) return;
+
+      handshake.observe(parsed);
 
       if (parsedSampleCount < 5) {
         parsedSampleCount += 1;
@@ -128,6 +139,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     discovery.stop();
     capture?.stop();
+    handshake.close();
     void (pcapWriter ? pcapWriter.close() : Promise.resolve()).finally(() => server.close(() => process.exit(0)));
   });
 }
