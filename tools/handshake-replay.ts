@@ -32,11 +32,22 @@ if (buffer.length < 24) {
   process.exit(1);
 }
 
-const magic = buffer.readUInt32LE(0);
-if (magic !== 0xa1b2c3d4 && magic !== 0xd4c3b2a1) {
-  console.error(`${path}: not a pcap file (magic 0x${magic.toString(16)})`);
+const rawMagic = buffer.readUInt32LE(0);
+// Classic pcap has two resolutions and two byte orders. The proxy's own writer
+// emits microseconds (0xa1b2c3d4); tshark/dumpcap on a modern interface default
+// to nanoseconds (0xa1b23c4d). Read the magic little-endian and accept both.
+const isLittleEndian = rawMagic === 0xa1b2c3d4 || rawMagic === 0xa1b23c4d;
+const isNanosecond = rawMagic === 0xa1b23c4d || rawMagic === 0x4d3cb2a1;
+if (!isLittleEndian && rawMagic !== 0xd4c3b2a1 && rawMagic !== 0x4d3cb2a1) {
+  console.error(`${path}: not a pcap file (magic 0x${rawMagic.toString(16)})`);
   process.exit(1);
 }
+
+const readU32 = (offset: number): number =>
+  isLittleEndian ? buffer.readUInt32LE(offset) : buffer.readUInt32BE(offset);
+// Microsecond files store usec in the second timestamp word; nanosecond files
+// store nsec. Both are converted to milliseconds here.
+const unitsPerMillisecond = isNanosecond ? 1_000_000 : 1_000;
 
 // The sweep clock is only used for expiry; pinning it to the last packet time
 // means replay never expires a connection that the capture simply ended on.
@@ -52,10 +63,10 @@ let parsed = 0;
 let skipped = 0;
 
 while (offset + 16 <= buffer.length) {
-  const tsSec = buffer.readUInt32LE(offset);
-  const tsUsec = buffer.readUInt32LE(offset + 4);
-  const inclLen = buffer.readUInt32LE(offset + 8);
-  const origLen = buffer.readUInt32LE(offset + 12);
+  const tsSec = readU32(offset);
+  const tsUsec = readU32(offset + 4);
+  const inclLen = readU32(offset + 8);
+  const origLen = readU32(offset + 12);
   offset += 16;
 
   if (offset + inclLen > buffer.length) {
@@ -66,7 +77,7 @@ while (offset + 16 <= buffer.length) {
   const bytes = buffer.subarray(offset, offset + inclLen);
   offset += inclLen;
 
-  const timestamp = tsSec * 1000 + Math.floor(tsUsec / 1000);
+  const timestamp = tsSec * 1000 + Math.floor(tsUsec / unitsPerMillisecond);
   clock = Math.max(clock, timestamp);
 
   const packet = parsePacket({
