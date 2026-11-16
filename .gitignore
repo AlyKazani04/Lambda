@@ -2,6 +2,10 @@ node_modules
 
 .env
 
+# Local-only compose overrides (LAN exposure, machine-specific ports)
+compose.lan.yml
+compose.override.yml
+
 *.pcap
 
 captures/
