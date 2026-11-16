@@ -102,3 +102,17 @@ export function scaledWindow(tcp: TcpHeader): number {
   const scale = tcp.options.windowScale ?? 0;
   return tcp.window * (1 << scale);
 }
+
+/** One TCP metadata event as published to the dashboard's `tcp` channel. */
+export interface TcpMetadataEvent {
+  timestamp: number;
+  src: string;
+  dst: string;
+  srcPort: number;
+  dstPort: number;
+  flags: string;
+  seq: number;
+  ack: number;
+  window: number;
+  options?: Record<string, unknown>;
+}

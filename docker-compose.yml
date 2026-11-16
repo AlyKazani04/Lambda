@@ -56,3 +56,18 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      DASHBOARD_PORT: 3000
+      DASHBOARD_SERVICES: '[{"name":"proxy","url":"http://proxy:8080","healthPath":"/health"},{"name":"dashboard","url":"http://127.0.0.1:3000","healthPath":"/api/time"},{"name":"stub","url":"http://stub:3001","healthPath":"/health"},{"name":"redis","url":"redis://redis:6379"}]'
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
