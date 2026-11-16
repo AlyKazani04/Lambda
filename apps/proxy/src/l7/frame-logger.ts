@@ -10,30 +10,38 @@ export interface FrameRecorderOptions {
   path: string;
   group: string;
   upstream: string;
+  /** Injectable clock for deterministic tests; defaults to performance.now. */
+  now?: () => number;
 }
 
 export interface FrameRecorder {
   /** Fires when the upstream response headers arrive. */
   onUpstreamResponse: (upstreamRes: IncomingMessage) => void;
-  /** Publishes both hop records; call once with the final status. */
+  /** Publishes exactly one frame record; call once with the final status. */
   finish: (status: number) => void;
 }
 
 /**
- * Times one proxied request and publishes a record per hop.
+ * Times one proxied request and publishes exactly one frame record (A2).
  *
- * The proxy cannot see when the client sent the request, so the client→proxy
- * duration is the proxy's own request-leg time, while the proxy→upstream
- * duration spans the upstream wait. The two records share a trace ID so the
- * dashboard can show the two latency clusters separately.
+ * The two latency components are merged into a single end-to-end duration as
+ * observed by the proxy: request reception + upstream wait + response flush.
+ * The record's hop is `client→proxy` because it describes the full round trip
+ * on the client-facing leg; the slow-endpoint signal is carried by the gap
+ * between `durationMs` (end-to-end) and `internalMs` (proxy work only).
+ *
+ * Per A2, `internalMs` measures the proxy's own work only — request reception
+ * and final response flushing — and explicitly excludes the upstream wait, so
+ * `durationMs - internalMs` is the network contribution.
  */
 export function createFrameRecorder(
   req: IncomingMessage,
   options: FrameRecorderOptions,
 ): FrameRecorder {
-  const startedAt = performance.now();
-  let requestEnd = startedAt;
-  let upstreamBodyDone = startedAt;
+  const now = options.now ?? (() => performance.now());
+  const startedAt = now();
+  let requestEndAt: number | null = null;
+  let upstreamBodyDoneAt: number | null = null;
   let requestBytes = 0;
   let responseBytes = 0;
   let published = false;
@@ -42,7 +50,7 @@ export function createFrameRecorder(
     requestBytes += chunk.length;
   });
   req.on('end', () => {
-    requestEnd = performance.now();
+    requestEndAt = now();
   });
 
   return {
@@ -51,7 +59,7 @@ export function createFrameRecorder(
         responseBytes += chunk.length;
       });
       upstreamRes.on('end', () => {
-        upstreamBodyDone = performance.now();
+        upstreamBodyDoneAt = now();
       });
     },
 
@@ -59,31 +67,32 @@ export function createFrameRecorder(
       if (published) return;
       published = true;
 
-      const responseDone = performance.now();
-      const timestamp = Date.now();
-      const base = {
+      const responseDone = now();
+      const requestEnd = requestEndAt ?? responseDone;
+
+      // Waiting on the upstream is network time, not proxy work. Without an
+      // upstream response (e.g. a connection error) everything after request
+      // reception is attributed to that wait rather than to the proxy.
+      const upstreamWait = upstreamBodyDoneAt === null
+        ? Math.max(0, responseDone - requestEnd)
+        : Math.max(0, upstreamBodyDoneAt - requestEnd);
+
+      const durationMs = Math.max(0, responseDone - startedAt);
+      const internalMs = Math.max(0, durationMs - upstreamWait);
+
+      options.bus.publishFrame({
         traceId: options.traceId,
+        hop: 'client→proxy',
         method: options.method,
         path: options.path,
         status,
         requestBytes,
         responseBytes,
-        timestamp,
+        durationMs,
+        internalMs,
+        timestamp: Date.now(),
         group: options.group,
         upstream: options.upstream,
-      };
-
-      options.bus.publishFrame({
-        ...base,
-        hop: 'client→proxy',
-        durationMs: requestEnd - startedAt,
-        internalMs: requestEnd - startedAt,
-      });
-      options.bus.publishFrame({
-        ...base,
-        hop: 'proxy→upstream',
-        durationMs: responseDone - requestEnd,
-        internalMs: responseDone - upstreamBodyDone,
       });
     },
   };
