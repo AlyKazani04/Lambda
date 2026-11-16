@@ -25,9 +25,10 @@ function redisClientFor(url: string): Redis {
   let client = redisClients.get(url);
   if (client === undefined) {
     client = new Redis(url, {
-      // Fail fast while disconnected so a dead Redis marks the service down
-      // instead of stalling the whole /api/services request.
-      enableOfflineQueue: false,
+      // Queue the first INFO until the client is ready so an up Redis shows as
+      // up on the very first probe, but cap the wait so a dead one reports
+      // "down" within a few seconds instead of hanging /api/services.
+      commandTimeout: 3000,
       maxRetriesPerRequest: 1,
       connectTimeout: 3000,
       retryStrategy: (attempt) => Math.min(attempt * 200, 5000),
