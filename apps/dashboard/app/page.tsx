@@ -5,6 +5,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import type { FrameEvent, TcpMetadataEvent } from 'shared-types';
 
 import { parseFrameEvent, parseTcpEvent } from '../lib/stream';
+import { useServices } from '../lib/use-services';
 
 import Frames from './components/frames';
 import Overview from './components/overview';
@@ -37,7 +38,8 @@ function sidebarButtonStyle(active: boolean): CSSProperties {
 
 export default function Home() {
   const [view, setView] = useState<string>('overview');
-  const [serviceNames, setServiceNames] = useState<string[]>([]);
+  const services = useServices();
+  const serviceNames = services.map((service) => service.name);
   const [frames, setFrames] = useState<FrameEvent[]>([]);
   const [tcpEvents, setTcpEvents] = useState<TcpMetadataEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -67,15 +69,6 @@ export default function Home() {
     };
 
     return () => ws.close();
-  }, []);
-
-  useEffect(() => {
-    void fetch('/api/services')
-      .then((res) => res.json())
-      .then((data: { services: Array<{ name: string }> }) => {
-        setServiceNames(data.services.map((service) => service.name));
-      })
-      .catch(() => {});
   }, []);
 
   const builtins: Array<{ id: BuiltinView; label: string }> = [
