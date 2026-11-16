@@ -1,37 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-
-interface ServiceStatus {
-  name: string;
-  url: string;
-  status: 'up' | 'down';
-  latencyMs?: number;
-  detail?: unknown;
-  error?: string;
-}
+import { useServices } from '../../lib/use-services';
 
 export default function Overview() {
-  const [services, setServices] = useState<ServiceStatus[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch('/api/services');
-        const data = (await res.json()) as { services: ServiceStatus[] };
-        if (!cancelled) setServices(data.services);
-      } catch {
-        /* keep the last good view */
-      }
-    };
-    void load();
-    const timer = setInterval(load, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
+  const services = useServices();
 
   return (
     <div>
