@@ -81,10 +81,19 @@ export function createBridge(config: BridgeConfig): RedisBridge {
 
   return {
     addClient: (ws) => {
-      clients.add(ws);
-      void backfill(ws);
+      // Register teardown first: the socket may close while history is being
+      // sent, and a half-open socket must never linger in the broadcast set.
       ws.on('close', () => clients.delete(ws));
       ws.on('error', () => clients.delete(ws));
+
+      // Backfill before joining the broadcast set. The client prepends every
+      // message it receives, so a live frame broadcast during the async
+      // backfill would end up buried beneath the history that follows it.
+      // Frames published in this short window are intentionally dropped rather
+      // than delivered out of order; the next live message re-syncs the view.
+      void backfill(ws).then(() => {
+        if (ws.readyState === WebSocket.OPEN) clients.add(ws);
+      });
     },
     close: async () => {
       await subscriber.quit().catch(() => undefined);
