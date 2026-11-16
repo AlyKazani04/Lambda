@@ -51,12 +51,18 @@ export default function Home() {
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
     ws.onmessage = (event: MessageEvent<string>) => {
-      let message: StreamMessage;
+      let parsed: unknown;
       try {
-        message = JSON.parse(event.data) as StreamMessage;
+        parsed = JSON.parse(event.data) as unknown;
       } catch {
         return;
       }
+      // A skewed proxy can send `null`, an array or a message without a
+      // channel. Reject those before touching properties, and let the payload
+      // validators below reject malformed frame/TCP rows individually.
+      if (typeof parsed !== 'object' || parsed === null) return;
+      const message = parsed as StreamMessage;
+      if (typeof message.channel !== 'string') return;
       if (message.channel === 'frames') {
         const frame = parseFrameEvent(message.payload);
         if (frame === null) return;
