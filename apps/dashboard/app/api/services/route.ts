@@ -1,6 +1,6 @@
+import { Redis } from 'ioredis';
 import { NextResponse } from 'next/server';
 
-import { getReader } from '../../../lib/redis';
 import { services, type ServiceConfig } from '../../../lib/services';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +12,32 @@ interface ServiceStatus {
   latencyMs?: number;
   detail?: unknown;
   error?: string;
+}
+
+// Each configured redis:// URL gets its own client. The previous implementation
+// probed the default REDIS_URL connection via getReader() for every redis
+// service, so multiple configured Redis instances all reported the health of
+// the same endpoint. Keeping one client per URL fixes that; the connection is
+// cached so repeated 2 s polls do not churn sockets.
+const redisClients = new Map<string, Redis>();
+
+function redisClientFor(url: string): Redis {
+  let client = redisClients.get(url);
+  if (client === undefined) {
+    client = new Redis(url, {
+      // Fail fast while disconnected so a dead Redis marks the service down
+      // instead of stalling the whole /api/services request.
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 3000,
+      retryStrategy: (attempt) => Math.min(attempt * 200, 5000),
+    });
+    // The probe surfaces failures in its result; swallow the event so an
+    // unhandled 'error' cannot take down the dashboard process.
+    client.on('error', () => {});
+    redisClients.set(url, client);
+  }
+  return client;
 }
 
 /** Parse Redis INFO into sections, e.g. { Server: { redis_version: '...' } }. */
@@ -39,7 +65,7 @@ async function probe(service: ServiceConfig): Promise<ServiceStatus> {
   if (service.url.startsWith('redis://')) {
     const start = performance.now();
     try {
-      const info = await getReader().info();
+      const info = await redisClientFor(service.url).info();
       return {
         name: service.name,
         url: service.url,
