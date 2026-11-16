@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 
 import type { FrameEvent, TcpMetadataEvent } from 'shared-types';
 
+import { parseFrameEvent, parseTcpEvent } from '../lib/stream';
+
 interface StreamMessage {
   channel: string;
   payload: unknown;
@@ -30,9 +32,13 @@ export default function Home() {
         return;
       }
       if (message.channel === 'frames') {
-        setFrames((prev) => [message.payload as FrameEvent, ...prev].slice(0, MAX_ROWS));
+        const frame = parseFrameEvent(message.payload);
+        if (frame === null) return;
+        setFrames((prev) => [frame, ...prev].slice(0, MAX_ROWS));
       } else if (message.channel === 'tcp') {
-        setTcpEvents((prev) => [message.payload as TcpMetadataEvent, ...prev].slice(0, MAX_ROWS));
+        const event = parseTcpEvent(message.payload);
+        if (event === null) return;
+        setTcpEvents((prev) => [event, ...prev].slice(0, MAX_ROWS));
       }
     };
 
