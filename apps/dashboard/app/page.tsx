@@ -1,10 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 
 import type { FrameEvent, TcpMetadataEvent } from 'shared-types';
 
 import { parseFrameEvent, parseTcpEvent } from '../lib/stream';
+import { useServices } from '../lib/use-services';
+
+import Frames from './components/frames';
+import Overview from './components/overview';
+import ServiceDetail from './components/service-detail';
+import TcpTable from './components/tcp';
 
 interface StreamMessage {
   channel: string;
@@ -13,7 +19,27 @@ interface StreamMessage {
 
 const MAX_ROWS = 200;
 
+type BuiltinView = 'overview' | 'frames' | 'tcp';
+
+function sidebarButtonStyle(active: boolean): CSSProperties {
+  return {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    padding: '0.4rem 0.6rem',
+    marginBottom: '0.25rem',
+    border: '1px solid transparent',
+    borderRadius: 4,
+    background: active ? '#1f6feb' : 'transparent',
+    color: active ? '#fff' : '#333',
+    cursor: 'pointer',
+  };
+}
+
 export default function Home() {
+  const [view, setView] = useState<string>('overview');
+  const services = useServices();
+  const serviceNames = services.map((service) => service.name);
   const [frames, setFrames] = useState<FrameEvent[]>([]);
   const [tcpEvents, setTcpEvents] = useState<TcpMetadataEvent[]>([]);
   const [connected, setConnected] = useState(false);
@@ -25,12 +51,18 @@ export default function Home() {
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
     ws.onmessage = (event: MessageEvent<string>) => {
-      let message: StreamMessage;
+      let parsed: unknown;
       try {
-        message = JSON.parse(event.data) as StreamMessage;
+        parsed = JSON.parse(event.data) as unknown;
       } catch {
         return;
       }
+      // A skewed proxy can send `null`, an array or a message without a
+      // channel. Reject those before touching properties, and let the payload
+      // validators below reject malformed frame/TCP rows individually.
+      if (typeof parsed !== 'object' || parsed === null) return;
+      const message = parsed as StreamMessage;
+      if (typeof message.channel !== 'string') return;
       if (message.channel === 'frames') {
         const frame = parseFrameEvent(message.payload);
         if (frame === null) return;
@@ -45,74 +77,66 @@ export default function Home() {
     return () => ws.close();
   }, []);
 
+  const builtins: Array<{ id: BuiltinView; label: string }> = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'frames', label: 'Frames' },
+    { id: 'tcp', label: 'TCP' },
+  ];
+
+  const activeService = view === 'overview' || view === 'frames' || view === 'tcp' ? null : view;
+
   return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', margin: '2rem' }}>
-      <h1>Lambda</h1>
-      <p>WebSocket: {connected ? 'connected' : 'disconnected'}</p>
-
-      <h2>Frames ({frames.length})</h2>
-      <table border={1} cellPadding={4} style={{ borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th>trace</th>
-            <th>hop</th>
-            <th>method</th>
-            <th>path</th>
-            <th>status</th>
-            <th>req/resp bytes</th>
-            <th>duration</th>
-            <th>internal</th>
-          </tr>
-        </thead>
-        <tbody>
-          {frames.map((frame, index) => (
-            <tr key={`${frame.traceId}-${index}`}>
-              <td>{frame.traceId}</td>
-              <td>{frame.hop}</td>
-              <td>{frame.method}</td>
-              <td>{frame.path}</td>
-              <td>{frame.status}</td>
-              <td>
-                {frame.requestBytes}/{frame.responseBytes}
-              </td>
-              <td>{frame.durationMs.toFixed(1)} ms</td>
-              <td>{frame.internalMs.toFixed(2)} ms</td>
-            </tr>
+    <div style={{ display: 'flex', fontFamily: 'system-ui, sans-serif' }}>
+      <aside
+        style={{
+          width: 220,
+          flexShrink: 0,
+          borderRight: '1px solid #ddd',
+          padding: '1rem',
+          minHeight: '100vh',
+          boxSizing: 'border-box',
+        }}
+      >
+        <h1 style={{ fontSize: '1.2rem', margin: '0 0 1rem' }}>Lambda</h1>
+        <nav>
+          {builtins.map((entry) => (
+            <button
+              key={entry.id}
+              onClick={() => setView(entry.id)}
+              style={sidebarButtonStyle(view === entry.id)}
+            >
+              {entry.label}
+            </button>
           ))}
-        </tbody>
-      </table>
-
-      <h2>TCP ({tcpEvents.length})</h2>
-      <table border={1} cellPadding={4} style={{ borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th>time</th>
-            <th>src</th>
-            <th>dst</th>
-            <th>flags</th>
-            <th>seq</th>
-            <th>ack</th>
-            <th>window</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tcpEvents.map((event, index) => (
-            <tr key={`tcp-${index}`}>
-              <td>{new Date(event.timestamp).toLocaleTimeString()}</td>
-              <td>
-                {event.src}:{event.srcPort}
-              </td>
-              <td>
-                {event.dst}:{event.dstPort}
-              </td>
-              <td>{event.flags}</td>
-              <td>{event.seq}</td>
-              <td>{event.ack}</td>
-              <td>{event.window}</td>
-            </tr>
+        </nav>
+        <h2
+          style={{
+            fontSize: '0.8rem',
+            textTransform: 'uppercase',
+            color: '#666',
+            margin: '1.5rem 0 0.5rem',
+          }}
+        >
+          Services
+        </h2>
+        <nav>
+          {serviceNames.map((name) => (
+            <button key={name} onClick={() => setView(name)} style={sidebarButtonStyle(view === name)}>
+              {name}
+            </button>
           ))}
-        </tbody>
-      </table>
-    </main>
+        </nav>
+        <p style={{ fontSize: '0.75rem', color: '#666', marginTop: '1rem' }}>
+          WebSocket: {connected ? 'connected' : 'disconnected'}
+        </p>
+      </aside>
+
+      <main style={{ flex: 1, padding: '1.5rem', overflow: 'auto' }}>
+        {view === 'overview' && <Overview />}
+        {view === 'frames' && <Frames frames={frames} />}
+        {view === 'tcp' && <TcpTable events={tcpEvents} />}
+        {activeService !== null && <ServiceDetail name={activeService} />}
+      </main>
+    </div>
   );
 }

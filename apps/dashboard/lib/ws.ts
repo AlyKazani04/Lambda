@@ -8,6 +8,8 @@ import {
   TCP_HISTORY_KEY,
 } from 'shared-types';
 
+import { getReader } from './redis.js';
+
 export interface BridgeConfig {
   redisUrl: string;
   historyLimit: number;
@@ -33,9 +35,7 @@ export function createBridge(config: BridgeConfig): RedisBridge {
   const subscriber = new Redis(config.redisUrl, {
     retryStrategy: (attempt) => Math.min(attempt * 200, 5000),
   });
-  const reader = new Redis(config.redisUrl, {
-    retryStrategy: (attempt) => Math.min(attempt * 200, 5000),
-  });
+  const reader = getReader();
 
   const clients = new Set<WebSocket>();
 
