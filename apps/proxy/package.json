@@ -7,10 +7,11 @@
     "predev": "pnpm --filter shared-types run build",
     "dev": "tsx src/index.ts",
     "prebuild": "pnpm --filter shared-types run build",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "pretypecheck": "pnpm --filter shared-types run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "start": "node dist/index.js"
   },
   "keywords": [],
