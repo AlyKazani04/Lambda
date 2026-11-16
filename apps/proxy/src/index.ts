@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { loadConfig } from './config.js';
 import { createFrameBus } from './bus/redis.js';
+import { toTcpMetadataEvent } from './bus/tcp-event.js';
 import { startCapture } from './l4/capture.js';
 import { parsePacket } from './l4/packet-parser.js';
 import { createPcapWriter } from './l4/pcap-writer.js';
@@ -61,6 +62,10 @@ const capture = config.captureIface
       if (parsed === null) return;
 
       handshake.observe(parsed);
+
+      // Publish L4 metadata so the dashboard's TCP table is populated from the
+      // capture path. Fire-and-forget: publishTcp never awaits Redis.
+      bus.publishTcp(toTcpMetadataEvent(parsed));
 
       if (parsedSampleCount < 5) {
         parsedSampleCount += 1;
