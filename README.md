@@ -116,6 +116,66 @@ Two gotchas worth knowing before you debug a rotation that never advances:
   replica count, the surplus replicas are simply never selected — nothing warns
   you, because from the proxy's side the list is exactly as configured.
 
+## L4 handshake analysis (B3)
+
+`apps/proxy/src/l4/` holds the transport-layer work:
+
+| File               | Responsibility                                            |
+| ------------------ | --------------------------------------------------------- |
+| `capture.ts`       | B1 — `@audc/pcap` session on the physical NIC             |
+| `packet-parser.ts` | B2 — Ethernet/IPv4/TCP decode, flags, seq/ack, options    |
+| `handshake.ts`     | B3 — SYN → SYN-ACK → ACK deltas per 5-tuple               |
+| `pcap-writer.ts`   | B9 — 24-byte global header + 16-byte per-packet header    |
+
+`handshake.ts` keeps one record per connection, keyed by the direction-insensitive
+endpoint pair so the SYN and the SYN-ACK land on the same record. It verifies the
+ACK numbers (the SYN-ACK must acknowledge SYN+1; the final ACK must acknowledge
+SYN-ACK+1), counts retransmitted SYNs without treating them as new connections,
+and expires in-progress connections that never complete. Results leave through a
+`HandshakePublisher` port:
+
+- `publishConnection` — one event per completed handshake
+- `publishAggregate` — completed/in-progress/stale counts, ACK-mismatch counters,
+  and min/max/mean/p50/p95/p99 for the total and RTT-estimate timings
+
+`rttEstimateMs` is `totalMs / 2`. It is an **estimate**, not a measurement: it
+assumes a symmetric path, which real WiFi/LAN paths are not. B5's per-packet RTT
+estimation does not rely on that assumption.
+
+Until the Redis transport (F5) merges, `createConsoleHandshakePublisher` prints
+one line per handshake and one aggregate line per second:
+
+```text
+handshake 127.0.0.1:37364>127.0.0.1:8080 syn→synack=0ms synack→ack=0ms total=0ms rtt≈0.0ms retrans=0
+handshake-aggregate completed=2 inProgress=0 stale=0 rtt p50=0.0 p95=0.0 p99=0.0 max=0.0
+```
+
+### Verifying B3
+
+```bash
+pnpm test                  # unit tests over synthetic frames
+tools/handshake-replay.sh  # replay a capture through the same decode + analyse path
+```
+
+The replay tool needs no capture privileges: it reads a `.pcap` and runs the
+exact decode + analyse path, so a netem run can be evaluated offline and
+reproducibly.
+
+**In the Docker deployment the proxy cannot produce that pcap.** Its container
+netns has only `eth0`/`lo` (so `CAPTURE_IFACE=wlp0s20f3` does not exist) and it
+runs with `CapEff=0` (so libpcap has no `CAP_NET_RAW`). Capture on the host
+physical NIC instead, then replay:
+
+1. `tshark -i "$CAPTURE_IFACE" -f 'tcp port 8080' -F pcap -w /tmp/lan.pcap -a duration:45`
+2. `sudo tools/netem-up.sh "$CAPTURE_IFACE" wan` — 20 ms ± 5 ms.
+3. Drive traffic through the proxy from the second machine (see
+   [Cross-machine rig](#cross-machine-rig-laptop-a--laptop-b)).
+4. `tools/handshake-replay.sh /tmp/lan.pcap` — RTT p50 should be ~20 ms, not ~2 ms.
+5. `sudo tools/netem-down.sh "$CAPTURE_IFACE"`.
+
+The live dashboard view is deferred until the Redis transport (F5) merges; the
+publisher port is the seam it plugs into.
+
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and
@@ -142,13 +202,16 @@ node stress-test/dist/index.js --target http://127.0.0.1:8080 \
   --duration 30000 --concurrency 64 --ramp 5000
 ```
 
-Against the proxy on the other laptop, with netem applied and a collector
-receiving progress:
+Against the proxy on the other laptop — A must be exposed on the LAN first, see
+[Cross-machine rig](#cross-machine-rig-laptop-a--laptop-b):
 
 ```bash
 node stress-test/dist/index.js --target http://<laptop-a>:8080 \
-  --collector http://<laptop-a>:3000 --report-interval 2000
+  --duration 30000 --concurrency 64 --ramp 5000 --label lan-a
 ```
+
+Omit `--collector`: the collector endpoints are part of F5 and do not exist yet,
+so a run that passes it logs the clock offset as `unavailable` and ships nothing.
 
 ### Configuration
 
@@ -266,3 +329,41 @@ no `importers[...]` entry in the lockfile, which then fails
 - `@audc/pcap` — libpcap bindings, ships linux-x64 prebuilds so no compiler
   toolchain is needed in CI. Requires `allowBuilds` in `pnpm-workspace.yaml`.
 - TypeScript is pinned to `~5.9`. `typescript-eslint` does not yet support TS 7.
+
+## Cross-Machine Testing Notes
+
+*Proxy capture in Docker deployment:* The container's netns has only `eth0`/`lo` (`/proc/<pid>/root/sys/class/net`). `CAPTURE_IFACE=wlp0s20f3` does not exist there; `createSession` throws `No such device exists`. The container runs with `CapEff=0` and `CapBnd=0xa80435fb`. Docker does not give non-root containers effective capabilities, so `cap_add: NET_ADMIN` is inert and libpcap cannot open a packet socket (`CAP_NET_RAW may be required`). Consequences: the proxy's live handshake publisher prints nothing; the `.pcap` writer never opens; `apps/proxy/capture.pcap` on the host is stale.
+
+*Host capture + replay workaround:* The working route is host-side capture plus offline replay — the same decode and analyse path, no capture privileges needed by the analyser:
+```bash
+# on A, on the physical NIC
+tshark -i "$CAPTURE_IFACE" -f 'tcp port 8080' -F pcap -w /tmp/lan.pcap -a duration:45
+# on B, drive traffic
+node stress-test/dist/index.js --target http://<laptop-a>:8080 --duration 30000 ...
+# on A, analyse
+tools/handshake-replay.sh /tmp/lan.pcap
+```
+`dumpcap`/`tshark` can capture unprivileged here because `dumpcap` carries file capabilities (`cap_net_raw=eip`) and is `setgid wireshark`. `@audc/pcap` inside the container cannot.
+
+Wireshark writes **nanosecond** pcaps by default (magic `0xa1b23c4d`); the replay tool now accepts microsecond and nanosecond, in both byte orders.
+
+*Two traps that look like a broken parser:*
+- **Loopback:** Traffic to A's own IP is delivered over `lo` and never touches the WiFi NIC, so a local `curl` produces an empty capture. The traffic must come from B.
+- **netem scope:** `netem-up.sh` shapes the whole physical interface, not just the test flow. 20 ms is harmless; the `lossy` profile will degrade an interactive SSH session. Always `netem-down.sh` afterwards.
+
+*Default-target trap:* The generator defaults to `http://127.0.0.1:3001` — the stub. Run on B with a blank `--target`, it aims at B's own loopback, where nothing listens, and reports 100% transport errors within a couple of seconds. Always pass `--target http://<laptop-a>:8080` on B.
+
+*Exposing the proxy on the LAN:* `docker-compose.yml` binds the proxy to `127.0.0.1:8080` only. For a LAN run, layer the local override:
+```bash
+docker compose -f docker-compose.yml -f compose.lan.yml up -d proxy
+ss -tlnp | grep 8080     # must show 0.0.0.0:8080, not 127.0.0.1:8080
+```
+`compose.lan.yml` is machine-local and gitignored; it replaces the port mapping with `0.0.0.0:8080:8080`. From B:
+```bash
+curl -sS -m 5 http://<laptop-a>:8080/health     # {"status":"ok",...}
+```
+If that fails, two causes in order:
+- **ufw:** A runs ufw with `DEFAULT_FORWARD_POLICY=DROP`. Docker's FORWARD rules normally accept published ports; verify with `sudo ufw status verbose`, and if needed `sudo ufw allow 8080/tcp`.
+- **Client isolation:** University WiFi often allows ICMP between clients but blocks TCP. Fall back to Tailscale (the original design; currently stopped) or a mobile hotspot.
+
+*Evidence from the 2026-11-16 run:* With the proxy still bound to loopback, `/health` reported 1494 api + 996 timeline selections — exactly a 2484-request local smoke run plus six manual `/api/small` curls. Zero off-box requests reached the proxy. This is the expected state before `compose.lan.yml` is applied.
