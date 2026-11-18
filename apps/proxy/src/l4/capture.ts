@@ -3,7 +3,10 @@ import type { LinkType, PcapSession } from '@audc/pcap';
 
 export interface CapturedPacket {
   bytes: Buffer;
+  /** Capture time in whole milliseconds, kept for the analysers. */
   timestamp: number;
+  /** Exact capture time in microseconds. Used by the .pcap writer. */
+  timestampUsec?: number;
   capturedLength: number;
   originalLength: number;
   linkType: LinkType;
@@ -118,6 +121,7 @@ export function startCapture(options: CaptureOptions): CaptureHandle {
       const packet: CapturedPacket = {
         bytes,
         timestamp: sec * 1000 + Math.floor(usec / 1000),
+        timestampUsec: sec * 1_000_000 + usec,
         capturedLength,
         originalLength,
         linkType: raw.link_type,

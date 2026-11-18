@@ -108,6 +108,12 @@ export default function Home() {
               {entry.label}
             </button>
           ))}
+          <a
+            href="/export"
+            style={{ ...sidebarButtonStyle(false), display: 'block', textDecoration: 'none' }}
+          >
+            Export .pcap
+          </a>
         </nav>
         <h2
           style={{

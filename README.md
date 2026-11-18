@@ -176,6 +176,56 @@ physical NIC instead, then replay:
 The live dashboard view is deferred until the Redis transport (F5) merges; the
 publisher port is the seam it plugs into.
 
+## B9 — exporting a capture
+
+The proxy records every captured packet (B1) into `PCAP_EXPORT_PATH`
+(`capture.pcap` by default) as a standard libpcap file. The dashboard's
+**Export .pcap** button downloads a snapshot of that file; capture continues
+into a fresh file immediately afterwards.
+
+```text
+dashboard /export  ->  GET /api/export  ->  proxy GET /api/export.pcap  ->  .pcap bytes
+```
+
+`PROXY_EXPORT_URL` tells the dashboard where the proxy is. It defaults to
+`http://127.0.0.1:8080` for host runs and is set to `http://proxy:8080` in
+compose. Capture must be enabled and at least one packet must have arrived,
+or the proxy endpoint returns `503 capture_not_ready`. The dashboard maps that
+to a `502` with the same detail so the UI can show the reason.
+
+The link-layer type comes from the capture session, never a hardcoded `1`.
+The writer maps `@audc/pcap`'s `LinkType` to the pcap value: Ethernet 1, raw IP
+101, Linux SLL 113, NULL 0, radiotap 127. A WiFi NIC reports radiotap —
+writing 1 there makes Wireshark dissect every frame as Ethernet, which is
+exactly the failure this issue exists to prevent.
+
+The writer also stores the capture's own microsecond timestamps and clamps
+`incl_len` to `snaplen` while preserving `orig_len`. That is what makes a
+spot-check against `tshark` agree instead of drifting by a millisecond.
+
+### Verifying B9 without a capture device
+
+```bash
+# tsx is a workspace-package dev dependency, so run it through the proxy package.
+pnpm --filter proxy exec tsx ../../tools/pcap-selftest.ts /tmp/lambda-selftest.pcap 10000
+tools/pcap-verify.sh /tmp/lambda-selftest.pcap
+```
+
+The first command writes 10,000 valid Ethernet/IPv4/TCP frames through the
+same `PcapWriter` the proxy uses. The second checks packet count, malformed
+packets, encapsulation, chronological timestamps and both length fields with
+`capinfos`/`tshark`.
+
+For the full demo, generate traffic through the proxy (including
+`/api/reset`), click **Download .pcap**, open the file in Wireshark and filter
+`tcp.flags.reset == 1`. The HTTP request that caused it is in the Frames view
+with the same trace ID — that correlation is the project's thesis.
+
+Mind the capture constraint from [Verifying B3](#verifying-b3): inside the
+proxy container the WiFi NIC is absent and libpcap has no `CAP_NET_RAW`. Set
+`CAPTURE_IFACE=eth0` on the proxy container to export bridge traffic, or run
+the proxy on the host with its physical NIC to export host traffic.
+
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and
