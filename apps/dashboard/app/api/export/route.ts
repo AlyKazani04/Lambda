@@ -44,10 +44,15 @@ export async function GET() {
       },
     });
   } catch (error) {
+    // Same class of leak as the proxy's export endpoint: keep connection
+    // details in the server log, never in a browser-visible response.
+    console.error(
+      `dashboard export failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
     return NextResponse.json(
       {
         error: 'proxy_unreachable',
-        detail: error instanceof Error ? error.message : String(error),
+        detail: 'the proxy could not be reached',
       },
       { status: 502 },
     );

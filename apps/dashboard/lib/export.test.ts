@@ -79,6 +79,8 @@ test('GET returns 502 when the proxy cannot be reached', async () => {
   process.env.PROXY_EXPORT_URL = 'http://127.0.0.1:1';
   const response = await GET();
   assert.equal(response.status, 502);
-  const body = await response.json() as { error: string };
+  const body = await response.json() as { error: string; detail: string };
   assert.equal(body.error, 'proxy_unreachable');
+  assert.equal(body.detail, 'the proxy could not be reached');
+  assert.doesNotMatch(body.detail, /ECONNREFUSED|127\.0\.0\.1:1/);
 });

@@ -48,9 +48,14 @@ export async function servePcapExport(
     });
     res.end(bytes);
   } catch (error) {
+    // The filesystem error can contain an absolute path. Keep it in the
+    // server log; the client gets a stable, non-leaking message (CWE-209).
+    console.error(
+      `pcap export failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`,
+    );
     sendJson(res, 500, {
       error: 'export_failed',
-      detail: error instanceof Error ? error.message : String(error),
+      detail: 'capture export failed; see proxy log',
     });
   }
 }

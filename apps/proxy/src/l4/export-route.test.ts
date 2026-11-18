@@ -97,3 +97,23 @@ test('POST /api/export.pcap is rejected with 405', async () => {
     assert.equal(response.headers.get('allow'), 'GET');
   });
 });
+
+test('a failed export never returns the underlying error message', async () => {
+  // A directory is not a file: readFile throws EISDIR, which would otherwise
+  // leak the absolute path through the 500 response (CWE-209).
+  const dir = mkdtempSync(join(tmpdir(), 'lambda-export-error-'));
+  const recorder = new PcapRecorder({ path: dir, log: () => {} });
+  recorder.observe(packet(1));
+
+  await withServer(recorder, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/export.pcap`);
+    assert.equal(response.status, 500);
+    const body = await response.json() as { error: string; detail: string };
+    assert.equal(body.error, 'export_failed');
+    assert.equal(body.detail, 'capture export failed; see proxy log');
+    assert.doesNotMatch(body.detail, /EISDIR|ENOENT|lambda-export-error/);
+  });
+
+  await recorder.close();
+  rmSync(dir, { recursive: true, force: true });
+});
