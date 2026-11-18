@@ -41,6 +41,9 @@ shorted=$(tshark -r "$PCAP" -T fields -e frame.len -e frame.cap_len 2>/dev/null 
 check "captured length <= original length" "$shorted"
 
 echo "INFO  first 10 packets:"
-tshark -r "$PCAP" -T fields -e frame.number -e frame.time_epoch -e frame.len -e frame.cap_len -e tcp.flags 2>/dev/null | head -10 | sed 's/^/      /'
+# Consume all of tshark's output: `head` would close the pipe early and, under
+# `set -o pipefail`, abort this script with a SIGPIPE status even on a clean
+# file. Filter with awk instead so the final `exit $fail` is always reached.
+tshark -r "$PCAP" -T fields -e frame.number -e frame.time_epoch -e frame.len -e frame.cap_len -e tcp.flags 2>/dev/null | awk 'NR <= 10 { print "      " $0 }'
 
 exit "$fail"

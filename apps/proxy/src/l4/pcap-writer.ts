@@ -1,6 +1,8 @@
 import { createWriteStream } from 'node:fs';
 import type { WriteStream } from 'node:fs';
 
+import type { LinkType } from '@audc/pcap';
+
 import type { CapturedPacket } from './capture.js';
 
 export interface PcapWriterOptions {
@@ -13,16 +15,36 @@ export interface PcapWriterOptions {
 const DEFAULT_SNAPLEN = 65535;
 const DEFAULT_LINK_TYPE = 1; // LINKTYPE_ETHERNET
 
+/**
+ * libpcap link type names -> the numeric values in the pcap global header.
+ * The Record type is deliberate: adding a LinkType to @audc/pcap breaks the
+ * build here instead of silently falling back to Ethernet. Radiotap (127) is
+ * the one that matters most — the capture NIC in this project is WiFi.
+ */
+const LINK_TYPE_VALUES: Record<LinkType, number> = {
+  LINKTYPE_NULL: 0,
+  LINKTYPE_ETHERNET: 1,
+  LINKTYPE_RAW: 101,
+  LINKTYPE_LINUX_SLL: 113,
+  LINKTYPE_IEEE802_11_RADIO: 127,
+};
+
+export function linkTypeToPcap(linkType: LinkType): number {
+  return LINK_TYPE_VALUES[linkType] ?? DEFAULT_LINK_TYPE;
+}
+
 export class PcapWriter {
   private readonly stream: WriteStream;
   private readonly path: string;
+  private readonly snaplen: number;
   private readonly log: (line: string) => void;
   private closed = false;
 
   constructor(options: PcapWriterOptions = {}) {
     this.path = options.path ?? 'capture.pcap';
+    this.snaplen = options.snaplen ?? DEFAULT_SNAPLEN;
     this.log = options.log ?? ((line: string) => console.log(line));
-    const snaplen = options.snaplen ?? DEFAULT_SNAPLEN;
+    const snaplen = this.snaplen;
     const linkType = options.linkType ?? DEFAULT_LINK_TYPE;
 
     this.stream = createWriteStream(this.path, { flags: 'w' });
@@ -49,13 +71,19 @@ export class PcapWriter {
   write(packet: CapturedPacket): void {
     if (this.closed) return;
 
-    const inclLen = Math.min(packet.bytes.length, packet.capturedLength || packet.bytes.length);
+    const inclLen = Math.min(
+      packet.bytes.length,
+      packet.capturedLength || packet.bytes.length,
+      this.snaplen,
+    );
     const origLen = packet.originalLength || packet.bytes.length;
 
-    // Split the ms timestamp into seconds + microseconds.
-    const totalMs = packet.timestamp;
-    const tsSec = Math.floor(totalMs / 1000);
-    const tsUsec = (totalMs % 1000) * 1000;
+    // Prefer the exact capture microseconds. Deriving them from the ms field
+    // rounds every timestamp to a multiple of 1000 and makes spot-checks
+    // against tshark disagree on sub-millisecond timing.
+    const totalUsec = packet.timestampUsec ?? Math.round(packet.timestamp * 1000);
+    const tsSec = Math.floor(totalUsec / 1_000_000);
+    const tsUsec = totalUsec - tsSec * 1_000_000;
 
     // Per-packet header — exactly 16 bytes.
     const header = Buffer.alloc(16);

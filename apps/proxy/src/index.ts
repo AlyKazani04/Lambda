@@ -6,7 +6,8 @@ import { createFrameBus } from './bus/redis.js';
 import { toTcpMetadataEvent } from './bus/tcp-event.js';
 import { startCapture } from './l4/capture.js';
 import { parsePacket } from './l4/packet-parser.js';
-import { createPcapWriter } from './l4/pcap-writer.js';
+import { PcapRecorder } from './l4/pcap-recorder.js';
+import { handleExportRequest } from './l4/export-route.js';
 import { createConsoleHandshakePublisher, HandshakeAnalyser } from './l4/handshake.js';
 import { forward } from './forwarder.js';
 import { matchRoute, pathnameOf } from './router.js';
@@ -24,8 +25,7 @@ const discovery = startDiscovery(config, pools);
 let parsedSampleCount = 0;
 
 const pcapPath = (process.env.PCAP_EXPORT_PATH ?? 'capture.pcap').trim();
-
-let pcapWriter: ReturnType<typeof createPcapWriter> | null = null;
+const pcapRecorder = pcapPath === '' ? null : new PcapRecorder({ path: pcapPath });
 
 // L4 handshake analyser (B3). Fed from the capture path, publishes one result
 // per completed SYN → SYN-ACK → ACK plus an aggregate on every sweep. The
@@ -40,17 +40,10 @@ const capture = config.captureIface
     iface: config.captureIface,
     proxyPort: config.port,
     onPacket: (packet) => {
-      if (pcapPath !== '' && pcapWriter === null) {
-        const linkType = typeof packet.linkType === 'number'
-          ? packet.linkType
-          : packet.linkType === 'LINKTYPE_ETHERNET' ? 1
-          : packet.linkType === 'LINKTYPE_RAW' ? 101
-          : packet.linkType === 'LINKTYPE_LINUX_SLL' ? 113
-          : packet.linkType === 'LINKTYPE_NULL' ? 0
-          : 1;
-        pcapWriter = createPcapWriter({ path: pcapPath, linkType });
-      }
-      pcapWriter?.write(packet);
+      // B9: every captured packet is recorded before analysis, so an export
+      // contains exactly what the analysers saw. The recorder owns the link
+      // type and snapshot behaviour; no inline pcap-format logic here.
+      pcapRecorder?.observe(packet);
       const parsed = parsePacket({
         bytes: packet.bytes,
         timestamp: packet.timestamp,
@@ -111,6 +104,13 @@ function handleRequest(
   options: RequestOptions = {},
 ): void {
   const pathname = pathnameOf(req.url);
+
+  // B9: a local endpoint, intercepted before route matching so it is never
+  // forwarded to the traffic-shaping stub under /api/*.
+  if (pathname === '/api/export.pcap') {
+    handleExportRequest(req, res, pcapRecorder);
+    return;
+  }
 
   if (pathname === '/health' || pathname === '/health/') {
     handleHealth(res);
@@ -188,7 +188,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     capture?.stop();
     handshake.close();
     void bus.close();
-    void (pcapWriter ? pcapWriter.close() : Promise.resolve()).finally(() => server.close(() => process.exit(0)));
+    void (pcapRecorder?.close() ?? Promise.resolve()).finally(() => server.close(() => process.exit(0)));
   });
 }
 

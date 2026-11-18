@@ -65,6 +65,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       DASHBOARD_PORT: 3000
+      PROXY_EXPORT_URL: http://proxy:8080
       DASHBOARD_SERVICES: '[{"name":"proxy","url":"http://proxy:8080","healthPath":"/health"},{"name":"dashboard","url":"http://127.0.0.1:3000","healthPath":"/api/time"},{"name":"stub","url":"http://stub:3001","healthPath":"/health"},{"name":"redis","url":"redis://redis:6379"}]'
     depends_on:
       redis:
