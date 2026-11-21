@@ -7,6 +7,9 @@ compose.lan.yml
 compose.override.yml
 
 *.pcap
+# F8 parser-validation fixtures are committed on purpose (binary fixtures are a
+# legitimate use); live captures everywhere else stay ignored.
+!tools/parser-fixtures/*.pcap
 
 captures/
 
