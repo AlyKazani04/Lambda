@@ -226,6 +226,43 @@ proxy container the WiFi NIC is absent and libpcap has no `CAP_NET_RAW`. Set
 `CAPTURE_IFACE=eth0` on the proxy container to export bridge traffic, or run
 the proxy on the host with its physical NIC to export host traffic.
 
+## F8 — differential parser validation
+
+`tools/validate-parser.sh` proves the hand-written packet parser (B2) produces
+the *same answer* as `tshark` on the same capture file, and logs the comparison
+to `docs/parser-validation.md`. Wireshark is not the competitor here; it is the
+verifier. Any disagreement is a bug in one implementation or the other.
+
+```bash
+tools/validate-parser.sh                 # validate every committed fixture
+tools/validate-parser.sh a.pcap b.pcap   # validate specific captures
+```
+
+It runs non-interactively and exits non-zero on any mismatch — no capture
+privileges needed. Fixtures are committed in `tools/parser-fixtures/`: a real
+loopback capture plus synthetic resets, retransmissions/out-of-order, chunked
+transfers, and TCP-option/truncation/sequence-wrap edge cases. Regenerate the
+synthetic ones (they are written by the same `PcapWriter` the proxy uses):
+
+```bash
+pnpm --filter proxy exec tsx ../../tools/make-parser-fixtures.ts
+```
+
+Two tshark settings are essential and easy to get wrong:
+
+- `-o tcp.relative_sequence_numbers:false` — tshark defaults to *relative*
+  seq/ack, but the parser reads the absolute wire values. The script runs a
+  negative control that omits this flag to prove the harness catches the
+  resulting mismatch.
+- compare `tcp.window_size_value` (the raw 16-bit field), not `tcp.window_size`
+  (the value scaled by the negotiated window-scale factor).
+
+The pure comparison logic lives in `apps/proxy/src/l4/parser-validation.ts`
+(unit-tested over known inputs); `tools/validate-parser.ts` and the shell script
+are the file I/O around it. Timestamps are compared to microsecond tolerance,
+and frames are aligned by `frame.number` so the IPv6 frames the parser skips
+line up with the ones tshark's `ip && tcp` filter omits.
+
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and
