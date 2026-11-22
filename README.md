@@ -313,6 +313,80 @@ Two deployment notes:
   Ethernet-oriented parser, so a phone-over-Tailscale load test will populate
   Frames but not Connections.
 
+## B5 — RTT estimation (RFC 6298)
+
+`apps/proxy/src/l4/rtt.ts` measures round-trip time from captured packets and
+smooths it with RFC 6298. Each connection is keyed by the direction-insensitive
+5-tuple, so request and acknowledgement land on the same record.
+
+The estimator keeps `SRTT`, `RTTVAR` and the timer separately:
+
+```
+first sample R:  SRTT = R, RTTVAR = R/2, RTO = SRTT + 4×RTTVAR
+later samples:   RTTVAR = (1−β)×RTTVAR + β×|SRTT−R|
+                 SRTT   = (1−α)×SRTT   + α×R
+                 RTO    = SRTT + max(G, 4×RTTVAR)
+bounds:          1 s ≤ RTO ≤ 60 s
+retransmission:  timer ×2; reset to SRTT + 4×RTTVAR on ACK
+```
+
+`α = 1/8`, `β = 1/4`, multiplier `4`, min `1 s`, max `60 s` — verified against
+RFC 6298 §2.2–2.4 and §5.5. Note the issue text says "β/4 = 1/16"; that
+contradicts the RFC's `β` term, which is applied directly (`β = 1/4`). The
+implementation follows the RFC. `G` is the clock granularity, which is
+negligible against our millisecond capture timestamps, so `max(G, 4×RTTVAR)`
+reduces to `4×RTTVAR`.
+
+Two details matter more than the formula: `RTTVAR` must be updated using the
+*old* `SRTT` before `SRTT` is updated, and backoff must be applied to the timer,
+not to the stored estimate. Backing off the stored `RTO` permanently corrupts
+it; this implementation doubles a separate timer value and clears it on a new
+sample or a pure ACK.
+
+Samples come from two paths:
+
+1. **Timestamp option (preferred).** A data segment carrying `TSval` is held;
+   the opposite direction's `TSecr` echo matches it unambiguously. RTT is the
+   difference of the two *capture* timestamps, so the timestamp option's tick
+   rate never has to be assumed.
+2. **Sequence/ACK matching (fallback).** When timestamps are absent, an ACK of
+   `seq + payloadLen` closes the sample. Pure ACKs carry no payload and never
+   open a sample; unrelated ACKs are ignored rather than guessed at.
+
+A repeated data sequence is treated as a retransmission and backs the timer
+off. That is a deliberately simple heuristic until B4 lands; it cannot
+distinguish a reorder from a retransmission, so B7's reordering work will make
+it sharper. Both the pending-sample queue and per-connection sequence history
+are bounded (64 entries each), and connections expire after 15 s idle.
+
+Every sample publishes an `rtt` event through the same Redis bus and capped
+history list as the other L4 channels. Each event carries the raw sample plus
+`SRTT`, `RTTVAR`, base RTO, current timer and backoff state. The dashboard's
+**RTT** view shows the latest estimate per connection alongside the raw samples
+so the smoothing is visible. `kind` distinguishes `sample`, `backoff` and
+`ack` events.
+
+### Verifying B5
+
+```bash
+pnpm test                  # hand-computed SRTT/RTTVAR at 400/800/200 ms samples
+tools/rtt-replay.sh tools/parser-fixtures/chunked.pcap   # 2 ms seq/ack samples
+tools/rtt-replay.sh tools/parser-fixtures/options.pcap   # timestamp-echo sample
+REDIS_URL=redis://<redis-ip>:6379 tools/rtt-replay.sh tools/parser-fixtures/chunked.pcap
+```
+
+The replay tool needs no capture privileges and prints one line per event.
+The hand-computed test is the important one: after samples 400, 800 and 200 ms,
+SRTT must be 418.75 ms and RTTVAR 250 ms. If those numbers drift, the constants
+are wrong.
+
+For the live check, capture on the host physical NIC with traffic driven from
+the second machine (see [Verifying B3](#verifying-b3)); `netem-up.sh wan` adds
+20 ms ± 5 ms on the interface's root qdisc, i.e. the egress direction only, so
+the RTT observed at the capture point settles near 20 ms, not 2 ms. Shape both
+directions and it will double. Cross-check the smoothed RTT against B3's
+`rttEstimateMs`, which is `totalMs / 2` and assumes a symmetric path.
+
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and
@@ -426,6 +500,7 @@ rather than the load itself.
 | `node stress-test/dist/index.js` | Run the load generator (needs `pnpm build` first; see flags above) |
 | `tools/validate-parser.sh`       | Differential parser validation against tshark (see F8)            |
 | `tools/state-replay.sh`          | Replay a pcap through the B6 state machine (see B6)                |
+| `tools/rtt-replay.sh`            | Replay a pcap through the B5 RTT estimator (see B5)                |
 
 ## Continuous integration
 

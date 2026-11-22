@@ -10,6 +10,7 @@ import { PcapRecorder } from './l4/pcap-recorder.js';
 import { handleExportRequest } from './l4/export-route.js';
 import { createConsoleHandshakePublisher, HandshakeAnalyser } from './l4/handshake.js';
 import { TcpStateMachine } from './l4/state-machine.js';
+import { RttAnalyser } from './l4/rtt.js';
 import { forward } from './forwarder.js';
 import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
@@ -42,6 +43,12 @@ const stateMachine = new TcpStateMachine({
 const stateSweep = setInterval(() => stateMachine.sweep(), 1_000);
 stateSweep.unref();
 
+const rtt = new RttAnalyser({
+  publish: (event) => bus.publishRtt(event),
+});
+const rttSweep = setInterval(() => rtt.sweep(), 1_000);
+rttSweep.unref();
+
 const capture = config.captureIface
   ? startCapture({
     iface: config.captureIface,
@@ -63,6 +70,7 @@ const capture = config.captureIface
 
       handshake.observe(parsed);
       stateMachine.observe(parsed);
+      rtt.observe(parsed);
 
       // Publish L4 metadata so the dashboard's TCP table is populated from the
       // capture path. Fire-and-forget: publishTcp never awaits Redis.
@@ -202,6 +210,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     capture?.stop();
     handshake.close();
     clearInterval(stateSweep);
+    clearInterval(rttSweep);
     void bus.close();
     void (pcapRecorder?.close() ?? Promise.resolve()).finally(() => server.close(() => process.exit(0)));
   });

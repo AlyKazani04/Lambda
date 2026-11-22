@@ -1,4 +1,4 @@
-import type { FrameEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
+import type { FrameEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
 
 /**
  * WebSocket payloads cross the wire as JSON and may come from a proxy running
@@ -77,6 +77,63 @@ export function parseTcpEvent(payload: unknown): TcpMetadataEvent | null {
     options: isRecord(payload['options'])
       ? (payload['options'] as TcpMetadataEvent['options'])
       : undefined,
+  };
+}
+
+function isNullableFiniteNumber(value: unknown): boolean {
+  return value === null || isFiniteNumber(value);
+}
+
+export function parseRttEvent(payload: unknown): RttEstimateEvent | null {
+  if (!isRecord(payload)) return null;
+  const kind = payload['kind'];
+  if (
+    (kind !== 'sample' && kind !== 'backoff' && kind !== 'ack') ||
+    !hasString(payload, 'connectionId') ||
+    !hasString(payload, 'client') ||
+    !hasString(payload, 'server') ||
+    !isFiniteNumber(payload['timestamp']) ||
+    !isNullableFiniteNumber(payload['srttMs']) ||
+    !isNullableFiniteNumber(payload['rttvarMs']) ||
+    !isNullableFiniteNumber(payload['baseRtoMs']) ||
+    !isFiniteNumber(payload['rtoMs']) ||
+    typeof payload['backedOff'] !== 'boolean'
+  ) {
+    return null;
+  }
+
+  const rawSample = payload['sample'];
+  let sample: RttEstimateEvent['sample'];
+  if (rawSample !== undefined) {
+    if (
+      !isRecord(rawSample) ||
+      !isFiniteNumber(rawSample['timestamp']) ||
+      !isFiniteNumber(rawSample['rttMs']) ||
+      (rawSample['method'] !== 'timestamp' && rawSample['method'] !== 'seq-ack') ||
+      !hasString(rawSample, 'from')
+    ) {
+      return null;
+    }
+    sample = {
+      timestamp: rawSample['timestamp'] as number,
+      rttMs: rawSample['rttMs'] as number,
+      method: rawSample['method'] as 'timestamp' | 'seq-ack',
+      from: rawSample['from'] as string,
+    };
+  }
+
+  return {
+    kind: kind as RttEstimateEvent['kind'],
+    connectionId: payload['connectionId'] as string,
+    client: payload['client'] as string,
+    server: payload['server'] as string,
+    timestamp: payload['timestamp'] as number,
+    ...(sample === undefined ? {} : { sample }),
+    srttMs: payload['srttMs'] as number | null,
+    rttvarMs: payload['rttvarMs'] as number | null,
+    baseRtoMs: payload['baseRtoMs'] as number | null,
+    rtoMs: payload['rtoMs'] as number,
+    backedOff: payload['backedOff'] as boolean,
   };
 }
 
