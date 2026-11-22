@@ -1,4 +1,4 @@
-import type { FrameEvent, TcpMetadataEvent } from 'shared-types';
+import type { FrameEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
 
 /**
  * WebSocket payloads cross the wire as JSON and may come from a proxy running
@@ -77,5 +77,32 @@ export function parseTcpEvent(payload: unknown): TcpMetadataEvent | null {
     options: isRecord(payload['options'])
       ? (payload['options'] as TcpMetadataEvent['options'])
       : undefined,
+  };
+}
+
+export function parseTcpStateEvent(payload: unknown): TcpStateEvent | null {
+  if (!isRecord(payload)) return null;
+  if (
+    !hasString(payload, 'connectionId') ||
+    !hasString(payload, 'client') ||
+    !hasString(payload, 'server') ||
+    !hasString(payload, 'side') ||
+    !hasString(payload, 'state') ||
+    !isFiniteNumber(payload['timestamp']) ||
+    !isFiniteNumber(payload['rstCount'])
+  ) {
+    return null;
+  }
+  return {
+    connectionId: payload['connectionId'] as string,
+    client: payload['client'] as string,
+    server: payload['server'] as string,
+    side: payload['side'] as string,
+    state: payload['state'] as string,
+    timestamp: payload['timestamp'] as number,
+    rstCount: payload['rstCount'] as number,
+    traceId: hasString(payload, 'traceId') ? (payload['traceId'] as string) : undefined,
+    path: hasString(payload, 'path') ? (payload['path'] as string) : undefined,
+    illegal: payload['illegal'] === true,
   };
 }
