@@ -263,6 +263,56 @@ are the file I/O around it. Timestamps are compared to microsecond tolerance,
 and frames are aligned by `frame.number` so the IPv6 frames the parser skips
 line up with the ones tshark's `ip && tcp` filter omits.
 
+## B6 — TCP connection state
+
+`apps/proxy/src/l4/state-machine.ts` reconstructs each connection's TCP lifecycle
+from captured packets. Connections are keyed by a canonical 5-tuple, so packets
+in either direction map to one record. Each endpoint runs its own state machine —
+they are complementary (a FIN puts the sender in `FIN_WAIT_1` and the receiver in
+`CLOSE_WAIT`):
+
+```
+handshake   SYN_SENT / SYN_RCVD → ESTABLISHED
+active      ESTABLISHED → FIN_WAIT_1 → FIN_WAIT_2 → TIME_WAIT
+passive     ESTABLISHED → CLOSE_WAIT → LAST_ACK
+simultaneous close           → CLOSING → TIME_WAIT
+any state + RST              → CLOSED (counted)
+```
+
+`TIME_WAIT` is retained for 2 × MSL (120 s) and never expired early. Idle
+connections expire after 15 s, and the registry is hard-capped at 10 000 records;
+both bounds are configurable. Illegal transitions (e.g. a retransmitted SYN after
+`ESTABLISHED`) are logged no-ops, not state regressions.
+
+Every change is published to the `tcp-state` Redis channel and appears in the
+dashboard's **Connections** view as current state per endpoint plus full history.
+The proxy associates each request's `X-Request-ID` with its client endpoint, so
+the `CLOSED` event from a `/api/reset` RST carries the same trace ID and path —
+the frame in the Frames view and the reset connection can be linked directly.
+
+Replay a capture without capture privileges:
+
+```bash
+tools/state-replay.sh tools/parser-fixtures/reset.pcap
+```
+
+Set `REDIS_URL` to publish the same events into the dashboard:
+
+```bash
+REDIS_URL=redis://<redis-ip>:6379 tools/state-replay.sh tools/parser-fixtures/reset.pcap
+```
+
+Two deployment notes:
+
+- Redis is exposed on the compose network, not published to the host. Find the
+  container IP with `sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' lambda-redis-1`.
+- Live state events require the capture path, which does not work inside the
+  proxy container (no physical NIC, no `CAP_NET_RAW`). Run the proxy on the host
+  with `CAPTURE_IFACE` set to the physical NIC and traffic arriving from another
+  machine. Tailscale traffic arrives as raw IP and is skipped by the
+  Ethernet-oriented parser, so a phone-over-Tailscale load test will populate
+  Frames but not Connections.
+
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and
@@ -374,6 +424,8 @@ rather than the load itself.
 | `pnpm lint`                      | Lint all packages                                                  |
 | `pnpm infra:up` / `infra:down`   | Start/stop Docker services (**needs `sudo`** — see above)          |
 | `node stress-test/dist/index.js` | Run the load generator (needs `pnpm build` first; see flags above) |
+| `tools/validate-parser.sh`       | Differential parser validation against tshark (see F8)            |
+| `tools/state-replay.sh`          | Replay a pcap through the B6 state machine (see B6)                |
 
 ## Continuous integration
 
