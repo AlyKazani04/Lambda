@@ -116,3 +116,17 @@ export interface TcpMetadataEvent {
   window: number;
   options?: Record<string, unknown>;
 }
+
+/** One connection state change, published to the `tcp-state` channel. */
+export interface TcpStateEvent {
+  connectionId: string;
+  client: string;
+  server: string;
+  side: string;
+  state: string;
+  timestamp: number;
+  rstCount: number;
+  traceId?: string;
+  path?: string;
+  illegal?: boolean;
+}

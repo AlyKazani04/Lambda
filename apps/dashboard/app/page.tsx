@@ -2,12 +2,13 @@
 
 import { useEffect, useState, type CSSProperties } from 'react';
 
-import type { FrameEvent, TcpMetadataEvent } from 'shared-types';
+import type { FrameEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
 
-import { parseFrameEvent, parseTcpEvent } from '../lib/stream';
+import { parseFrameEvent, parseTcpEvent, parseTcpStateEvent } from '../lib/stream';
 import { useServices } from '../lib/use-services';
 
 import Frames from './components/frames';
+import Connections from './components/connections';
 import Overview from './components/overview';
 import ServiceDetail from './components/service-detail';
 import TcpTable from './components/tcp';
@@ -19,7 +20,7 @@ interface StreamMessage {
 
 const MAX_ROWS = 200;
 
-type BuiltinView = 'overview' | 'frames' | 'tcp';
+type BuiltinView = 'overview' | 'frames' | 'tcp' | 'connections';
 
 function sidebarButtonStyle(active: boolean): CSSProperties {
   return {
@@ -42,6 +43,7 @@ export default function Home() {
   const serviceNames = services.map((service) => service.name);
   const [frames, setFrames] = useState<FrameEvent[]>([]);
   const [tcpEvents, setTcpEvents] = useState<TcpMetadataEvent[]>([]);
+  const [stateEvents, setStateEvents] = useState<TcpStateEvent[]>([]);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -71,6 +73,10 @@ export default function Home() {
         const event = parseTcpEvent(message.payload);
         if (event === null) return;
         setTcpEvents((prev) => [event, ...prev].slice(0, MAX_ROWS));
+      } else if (message.channel === 'tcp-state') {
+        const event = parseTcpStateEvent(message.payload);
+        if (event === null) return;
+        setStateEvents((prev) => [event, ...prev].slice(0, MAX_ROWS));
       }
     };
 
@@ -81,9 +87,13 @@ export default function Home() {
     { id: 'overview', label: 'Overview' },
     { id: 'frames', label: 'Frames' },
     { id: 'tcp', label: 'TCP' },
+    { id: 'connections', label: 'Connections' },
   ];
 
-  const activeService = view === 'overview' || view === 'frames' || view === 'tcp' ? null : view;
+  const activeService =
+    view === 'overview' || view === 'frames' || view === 'tcp' || view === 'connections'
+      ? null
+      : view;
 
   return (
     <div style={{ display: 'flex', fontFamily: 'system-ui, sans-serif' }}>
@@ -141,6 +151,7 @@ export default function Home() {
         {view === 'overview' && <Overview />}
         {view === 'frames' && <Frames frames={frames} />}
         {view === 'tcp' && <TcpTable events={tcpEvents} />}
+        {view === 'connections' && <Connections events={stateEvents} />}
         {activeService !== null && <ServiceDetail name={activeService} />}
       </main>
     </div>
