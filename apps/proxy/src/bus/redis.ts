@@ -5,8 +5,11 @@ import {
   FRAME_HISTORY_KEY,
   TCP_CHANNEL,
   TCP_HISTORY_KEY,
+  TCP_STATE_CHANNEL,
+  TCP_STATE_HISTORY_KEY,
   type FrameEvent,
   type TcpMetadataEvent,
+  type TcpStateEvent,
 } from 'shared-types';
 
 export interface BusConfig {
@@ -17,6 +20,8 @@ export interface BusConfig {
 export interface FrameBus {
   publishFrame(frame: FrameEvent): void;
   publishTcp(event: TcpMetadataEvent): void;
+  publishTcpState(event: TcpStateEvent): void;
+  ready(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -28,28 +33,36 @@ export function createFrameBus(config: BusConfig): FrameBus {
     maxRetriesPerRequest: 1,
     retryStrategy: (attempt) => Math.min(attempt * 200, 5000),
   });
+  const pending = new Set<Promise<unknown>>();
 
   redis.on('error', (err) => {
     console.error(`redis bus: ${err.message}`);
   });
 
+  function ready(): Promise<void> {
+    if (redis.status === 'ready') return Promise.resolve();
+    return new Promise((resolve) => redis.once('ready', () => resolve()));
+  }
+
   function publish(channel: string, historyKey: string, payload: unknown): void {
     const json = JSON.stringify(payload);
-    void redis.publish(channel, json).catch(() => undefined);
-    // MULTI/EXEC keeps the push and the trim atomic: a dropped or reordered
-    // LTRIM would let the list grow past the cap under load.
-    void redis
-      .multi()
-      .lpush(historyKey, json)
-      .ltrim(historyKey, 0, config.historyLimit - 1)
-      .exec()
-      .catch(() => undefined);
+    const write = Promise.allSettled([
+      redis.publish(channel, json),
+      // MULTI/EXEC keeps the push and the trim atomic: a dropped or reordered
+      // LTRIM would let the list grow past the cap under load.
+      redis.multi().lpush(historyKey, json).ltrim(historyKey, 0, config.historyLimit - 1).exec(),
+    ]);
+    pending.add(write);
+    void write.then(() => pending.delete(write));
   }
 
   return {
     publishFrame: (frame) => publish(FRAME_CHANNEL, FRAME_HISTORY_KEY, frame),
     publishTcp: (event) => publish(TCP_CHANNEL, TCP_HISTORY_KEY, event),
+    publishTcpState: (event) => publish(TCP_STATE_CHANNEL, TCP_STATE_HISTORY_KEY, event),
+    ready,
     close: async () => {
+      await Promise.allSettled([...pending]);
       await redis.quit().catch(() => undefined);
     },
   };

@@ -19,6 +19,8 @@ class RecordingBus implements FrameBus {
     this.frames.push(frame);
   }
   publishTcp(): void {}
+  publishTcpState(): void {}
+  ready(): Promise<void> { return Promise.resolve(); }
   async close(): Promise<void> {}
 }
 
