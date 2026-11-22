@@ -8,6 +8,8 @@ import {
   TCP_HISTORY_KEY,
   TCP_STATE_CHANNEL,
   TCP_STATE_HISTORY_KEY,
+  RTT_CHANNEL,
+  RTT_HISTORY_KEY,
 } from 'shared-types';
 
 import { getReader } from './redis.js';
@@ -48,7 +50,7 @@ export function createBridge(config: BridgeConfig): RedisBridge {
     broadcast({ channel, payload: parse(message) });
   });
 
-  void subscriber.subscribe(FRAME_CHANNEL, TCP_CHANNEL, TCP_STATE_CHANNEL).catch(() => undefined);
+  void subscriber.subscribe(FRAME_CHANNEL, TCP_CHANNEL, TCP_STATE_CHANNEL, RTT_CHANNEL).catch(() => undefined);
 
   function parse(message: string): unknown {
     try {
@@ -82,6 +84,11 @@ export function createBridge(config: BridgeConfig): RedisBridge {
       for (const item of states.reverse()) {
         if (ws.readyState !== WebSocket.OPEN) return;
         ws.send(JSON.stringify({ channel: TCP_STATE_CHANNEL, payload: parse(item) }));
+      }
+      const rtt = await reader.lrange(RTT_HISTORY_KEY, 0, backfillLimit - 1);
+      for (const item of rtt.reverse()) {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ channel: RTT_CHANNEL, payload: parse(item) }));
       }
     } catch (err) {
       console.error(`backfill failed: ${err instanceof Error ? err.message : String(err)}`);
