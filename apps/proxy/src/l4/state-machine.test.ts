@@ -201,6 +201,7 @@ test('a retransmitted SYN after ESTABLISHED is a logged no-op', () => {
   assert.equal(view(sm)?.serverState, 'ESTABLISHED');
   assert.equal(sm.illegalCount, 1);
   assert.equal(lines.length, 1);
+  assert.equal(sm.recent().filter((event) => event.illegal === true).length, 1);
 });
 
 test('registry is hard-capped and evicts the least recently seen connection', () => {

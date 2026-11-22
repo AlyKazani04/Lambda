@@ -214,7 +214,7 @@ export class TcpStateMachine {
 
     const senderState = connection[senderSide === 'client' ? 'clientState' : 'serverState'];
     if (senderState !== null && senderState.state !== 'SYN_SENT' && flags.syn && !flags.ack && !flags.fin) {
-      this.logIllegal(key, senderSide, timestamp);
+      this.logIllegal(connection, key, senderSide, timestamp);
     }
 
     this.advance(connection, key, senderSide, senderTransition, flags, timestamp);
@@ -292,9 +292,15 @@ export class TcpStateMachine {
     this.emit(connection, key, side, next, timestamp);
   }
 
-  private logIllegal(key: string, side: 'client' | 'server', timestamp: number): void {
+  private logIllegal(
+    connection: Connection,
+    key: string,
+    side: 'client' | 'server',
+    timestamp: number,
+  ): void {
     this.totalIllegal += 1;
     this.onIllegal(`illegal transition connection=${key} side=${side} t=${timestamp}`);
+    this.emit(connection, key, side, connection[side === 'client' ? 'clientState' : 'serverState']?.state ?? 'CLOSED', timestamp, true);
   }
 
   private closeSides(connection: Connection, key: string, timestamp: number): void {
@@ -331,6 +337,7 @@ export class TcpStateMachine {
     side: 'client' | 'server',
     state: ConnectionState | 'CLOSED',
     timestamp: number,
+    illegal = false,
   ): void {
     const endpoint = side === 'client' ? connection.client : connection.server;
     const trace = this.traces.get(endpointKey(endpoint));
@@ -343,6 +350,7 @@ export class TcpStateMachine {
       timestamp,
       rstCount: connection.rstCount,
       ...(trace === undefined ? {} : { traceId: trace.traceId, path: trace.path }),
+      ...(illegal ? { illegal: true } : {}),
     };
     this.history.push(event);
     if (this.history.length > this.maxHistory) this.history.shift();
