@@ -9,7 +9,10 @@ import {
   TCP_STATE_HISTORY_KEY,
   RTT_CHANNEL,
   RTT_HISTORY_KEY,
+  RETRANSMIT_CHANNEL,
+  RETRANSMIT_HISTORY_KEY,
   type FrameEvent,
+  type RetransmitEvent,
   type RttEstimateEvent,
   type TcpMetadataEvent,
   type TcpStateEvent,
@@ -25,6 +28,7 @@ export interface FrameBus {
   publishTcp(event: TcpMetadataEvent): void;
   publishTcpState(event: TcpStateEvent): void;
   publishRtt(event: RttEstimateEvent): void;
+  publishRetransmit(event: RetransmitEvent): void;
   ready(): Promise<void>;
   close(): Promise<void>;
 }
@@ -65,6 +69,7 @@ export function createFrameBus(config: BusConfig): FrameBus {
     publishTcp: (event) => publish(TCP_CHANNEL, TCP_HISTORY_KEY, event),
     publishTcpState: (event) => publish(TCP_STATE_CHANNEL, TCP_STATE_HISTORY_KEY, event),
     publishRtt: (event) => publish(RTT_CHANNEL, RTT_HISTORY_KEY, event),
+    publishRetransmit: (event) => publish(RETRANSMIT_CHANNEL, RETRANSMIT_HISTORY_KEY, event),
     ready,
     close: async () => {
       await Promise.allSettled([...pending]);

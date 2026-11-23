@@ -387,6 +387,56 @@ the RTT observed at the capture point settles near 20 ms, not 2 ms. Shape both
 directions and it will double. Cross-check the smoothed RTT against B3's
 `rttEstimateMs`, which is `totalMs / 2` and assumes a symmetric path.
 
+## B4 — retransmission detection
+
+`apps/proxy/src/l4/retransmit.ts` decides which captured segments were sent
+twice, and why. It keeps a bounded set of sequence ranges per connection and
+per direction. A new data segment is a retransmission when it **overlaps** a
+range already seen:
+
+- **full** — same start and end; **partial** — any other overlap, reported with
+  the overlapping byte count.
+
+All range arithmetic uses the signed 32-bit difference from `shared-types`, so
+a range crossing `0xffffffff` is compared correctly. A segment that arrives
+late but does not overlap anything is reordering (B7's job), not a
+retransmission, and is not counted. Truncated captures (`capturedLength <
+originalLength`) are flagged on the event rather than trusted for length
+comparisons.
+
+Cause is decided from duplicate ACKs. Pure ACKs repeating the same cumulative
+ack number increment a per-direction counter; an advancing ACK resets it.
+Three or more duplicate ACKs covering the retransmitted bytes mean **fast
+retransmit** (the sender did not wait for a timer); otherwise it is **timeout**.
+Only timeout events carry `observedRtoMs`, because the gap before a fast
+retransmit is roughly one RTT, not the RTO. B5's RTT estimate is the reference
+for that distinction.
+
+Each event carries the per-connection and global retransmission rate, where
+the denominator is observed data segments. With netem `loss 0.5%` the global
+rate should settle near 0.5%; that is the acceptance check with ground truth
+we injected ourselves. Sequence history is capped at 256 ranges per direction,
+retained events at 1,000 and connections at 10,000; idle connections expire
+after 15 s.
+
+Events publish to the `retransmit` Redis channel and the dashboard's
+**Retransmits** view lists kind, cause, overlap, delay, observed RTO, duplicate
+ACK count and rate. It is an observer: nothing is retransmitted or blocked.
+
+### Verifying B4
+
+```bash
+pnpm test
+tools/retransmit-replay.sh tools/parser-fixtures/retransmit.pcap
+REDIS_URL=redis://<redis-ip>:6379 tools/retransmit-replay.sh tools/parser-fixtures/retransmit.pcap
+```
+
+The committed fixture produces one full/fast event (three duplicate ACKs) and
+one partial/timeout event. For the live check, run the load generator through
+the proxy with `netem loss 0.5%` applied to the physical NIC (see
+[Verifying B3](#verifying-b3)), then compare the dashboard's global rate with
+the injected loss. Always run `netem-down.sh` afterwards.
+
 ## Stress-test generator (F4)
 
 `stress-test/` generates a controlled flood of HTTP traffic at the proxy and
@@ -501,6 +551,7 @@ rather than the load itself.
 | `tools/validate-parser.sh`       | Differential parser validation against tshark (see F8)            |
 | `tools/state-replay.sh`          | Replay a pcap through the B6 state machine (see B6)                |
 | `tools/rtt-replay.sh`            | Replay a pcap through the B5 RTT estimator (see B5)                |
+| `tools/retransmit-replay.sh`     | Replay a pcap through B4 retransmission detection (see B4)         |
 
 ## Continuous integration
 

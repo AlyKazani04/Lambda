@@ -2,14 +2,15 @@
 
 import { useEffect, useState, type CSSProperties } from 'react';
 
-import type { FrameEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
+import type { FrameEvent, RetransmitEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
 
-import { parseFrameEvent, parseRttEvent, parseTcpEvent, parseTcpStateEvent } from '../lib/stream';
+import { parseFrameEvent, parseRetransmitEvent, parseRttEvent, parseTcpEvent, parseTcpStateEvent } from '../lib/stream';
 import { useServices } from '../lib/use-services';
 
 import Frames from './components/frames';
 import Connections from './components/connections';
 import Rtt from './components/rtt';
+import Retransmits from './components/retransmits';
 import Overview from './components/overview';
 import ServiceDetail from './components/service-detail';
 import TcpTable from './components/tcp';
@@ -21,7 +22,7 @@ interface StreamMessage {
 
 const MAX_ROWS = 200;
 
-type BuiltinView = 'overview' | 'frames' | 'tcp' | 'connections' | 'rtt';
+type BuiltinView = 'overview' | 'frames' | 'tcp' | 'connections' | 'rtt' | 'retransmits';
 
 function sidebarButtonStyle(active: boolean): CSSProperties {
   return {
@@ -46,6 +47,7 @@ export default function Home() {
   const [tcpEvents, setTcpEvents] = useState<TcpMetadataEvent[]>([]);
   const [stateEvents, setStateEvents] = useState<TcpStateEvent[]>([]);
   const [rttEvents, setRttEvents] = useState<RttEstimateEvent[]>([]);
+  const [retransmitEvents, setRetransmitEvents] = useState<RetransmitEvent[]>([]);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -83,6 +85,10 @@ export default function Home() {
         const event = parseRttEvent(message.payload);
         if (event === null) return;
         setRttEvents((prev) => [event, ...prev].slice(0, MAX_ROWS));
+      } else if (message.channel === 'retransmit') {
+        const event = parseRetransmitEvent(message.payload);
+        if (event === null) return;
+        setRetransmitEvents((prev) => [event, ...prev].slice(0, MAX_ROWS));
       }
     };
 
@@ -95,10 +101,16 @@ export default function Home() {
     { id: 'tcp', label: 'TCP' },
     { id: 'connections', label: 'Connections' },
     { id: 'rtt', label: 'RTT' },
+    { id: 'retransmits', label: 'Retransmits' },
   ];
 
   const activeService =
-    view === 'overview' || view === 'frames' || view === 'tcp' || view === 'connections' || view === 'rtt'
+    view === 'overview' ||
+    view === 'frames' ||
+    view === 'tcp' ||
+    view === 'connections' ||
+    view === 'rtt' ||
+    view === 'retransmits'
       ? null
       : view;
 
@@ -160,6 +172,7 @@ export default function Home() {
         {view === 'tcp' && <TcpTable events={tcpEvents} />}
         {view === 'connections' && <Connections events={stateEvents} />}
         {view === 'rtt' && <Rtt events={rttEvents} />}
+        {view === 'retransmits' && <Retransmits events={retransmitEvents} />}
         {activeService !== null && <ServiceDetail name={activeService} />}
       </main>
     </div>

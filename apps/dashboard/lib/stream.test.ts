@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseFrameEvent, parseRttEvent, parseTcpEvent } from './stream.js';
+import { parseFrameEvent, parseRetransmitEvent, parseRttEvent, parseTcpEvent } from './stream.js';
 
 const frame = {
   traceId: 'abc',
@@ -70,4 +70,32 @@ test('accepts well-formed RTT events and rejects malformed ones', () => {
     rttvarMs: null,
     baseRtoMs: null,
   });
+});
+
+const retransmit = {
+  kind: 'partial',
+  cause: 'fast',
+  connectionId: '10.0.0.1:51000|10.0.0.2:8080',
+  client: '10.0.0.1:51000',
+  server: '10.0.0.2:8080',
+  from: '10.0.0.1:51000',
+  timestamp: 1_700_000_000_000,
+  seq: 1_100,
+  length: 100,
+  overlapBytes: 50,
+  delayMs: 13,
+  observedRtoMs: null,
+  dupAcks: 3,
+  rate: 0.1,
+  globalRate: 0.05,
+  truncated: false,
+};
+
+test('accepts well-formed retransmit events and rejects malformed ones', () => {
+  assert.deepEqual(parseRetransmitEvent(retransmit), retransmit);
+  assert.equal(parseRetransmitEvent(null), null);
+  assert.equal(parseRetransmitEvent({ ...retransmit, observedRtoMs: undefined }), null);
+  assert.equal(parseRetransmitEvent({ ...retransmit, cause: 'weird' }), null);
+  const timeout = { ...retransmit, kind: 'full', cause: 'timeout', observedRtoMs: 240 };
+  assert.deepEqual(parseRetransmitEvent(timeout), timeout);
 });

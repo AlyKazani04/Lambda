@@ -1,4 +1,4 @@
-import type { FrameEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
+import type { FrameEvent, RetransmitEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
 
 /**
  * WebSocket payloads cross the wire as JSON and may come from a proxy running
@@ -77,6 +77,50 @@ export function parseTcpEvent(payload: unknown): TcpMetadataEvent | null {
     options: isRecord(payload['options'])
       ? (payload['options'] as TcpMetadataEvent['options'])
       : undefined,
+  };
+}
+
+export function parseRetransmitEvent(payload: unknown): RetransmitEvent | null {
+  if (!isRecord(payload)) return null;
+  const kind = payload['kind'];
+  const cause = payload['cause'];
+  if (
+    (kind !== 'full' && kind !== 'partial') ||
+    (cause !== 'fast' && cause !== 'timeout') ||
+    !hasString(payload, 'connectionId') ||
+    !hasString(payload, 'client') ||
+    !hasString(payload, 'server') ||
+    !hasString(payload, 'from') ||
+    !isFiniteNumber(payload['timestamp']) ||
+    !isFiniteNumber(payload['seq']) ||
+    !isFiniteNumber(payload['length']) ||
+    !isFiniteNumber(payload['overlapBytes']) ||
+    !isFiniteNumber(payload['delayMs']) ||
+    !isNullableFiniteNumber(payload['observedRtoMs']) ||
+    !isFiniteNumber(payload['dupAcks']) ||
+    !isFiniteNumber(payload['rate']) ||
+    !isFiniteNumber(payload['globalRate']) ||
+    typeof payload['truncated'] !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    kind: kind as RetransmitEvent['kind'],
+    cause: cause as RetransmitEvent['cause'],
+    connectionId: payload['connectionId'] as string,
+    client: payload['client'] as string,
+    server: payload['server'] as string,
+    from: payload['from'] as string,
+    timestamp: payload['timestamp'] as number,
+    seq: payload['seq'] as number,
+    length: payload['length'] as number,
+    overlapBytes: payload['overlapBytes'] as number,
+    delayMs: payload['delayMs'] as number,
+    observedRtoMs: payload['observedRtoMs'] as number | null,
+    dupAcks: payload['dupAcks'] as number,
+    rate: payload['rate'] as number,
+    globalRate: payload['globalRate'] as number,
+    truncated: payload['truncated'] as boolean,
   };
 }
 
