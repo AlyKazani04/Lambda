@@ -5,10 +5,19 @@ FROM node:26-slim AS base
 RUN npm install -g pnpm@12.6.0
 WORKDIR /repo
 
+# @audc/pcap has no prebuild for this Node ABI, so its install script compiles
+# from source. The native toolchain must exist BEFORE pnpm install, not just
+# before tsc — otherwise the install layer fails before it can be cached.
+FROM base AS native
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+      libpcap-dev build-essential libpcap0.8 iproute2
+
 # ---- deps: keyed on manifests only --------------------------------------
 # Source files are deliberately absent here. A code edit must not invalidate
 # the install layer; only a package.json or lockfile change should.
-FROM base AS deps
+FROM native AS deps
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/shared-types/package.json ./packages/shared-types/
 COPY apps/proxy/package.json ./apps/proxy/
@@ -17,9 +26,6 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
 
 # ---- builder ------------------------------------------------------------
 FROM deps AS builder
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends libpcap-dev build-essential
 COPY packages/config/ ./packages/config/
 COPY packages/shared-types/ ./packages/shared-types/
 COPY apps/proxy/ ./apps/proxy/
@@ -35,10 +41,7 @@ WORKDIR /repo/apps/proxy
 CMD ["./node_modules/.bin/tsx", "watch", "src/index.ts"]
 
 # ---- runtime ------------------------------------------------------------
-FROM base AS runner
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends libpcap0.8 iproute2
+FROM native AS runner
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/shared-types/package.json ./packages/shared-types/
 COPY apps/proxy/package.json ./apps/proxy/
