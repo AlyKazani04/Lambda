@@ -42,5 +42,8 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(port, () => {
-  console.log(`dashboard listening on http://127.0.0.1:${port}`);
+  const address = server.address();
+  const bound = typeof address === 'object' && address !== null ? address.address : '0.0.0.0';
+  const shown = bound === '::' || bound === '0.0.0.0' ? '0.0.0.0' : bound;
+  console.log(`dashboard listening on http://${shown}:${port}`);
 });
