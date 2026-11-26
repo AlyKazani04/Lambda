@@ -5,6 +5,7 @@ import { useSyncExternalStore } from 'react';
 export interface ServiceStatus {
   name: string;
   url: string;
+  displayUrl?: string;
   status: 'up' | 'down';
   latencyMs?: number;
   detail?: unknown;

@@ -8,6 +8,7 @@ export const dynamic = 'force-dynamic';
 interface ServiceStatus {
   name: string;
   url: string;
+  displayUrl?: string;
   status: 'up' | 'down';
   latencyMs?: number;
   detail?: unknown;
@@ -70,6 +71,7 @@ async function probe(service: ServiceConfig): Promise<ServiceStatus> {
       return {
         name: service.name,
         url: service.url,
+        displayUrl: service.displayUrl,
         status: 'up',
         latencyMs: performance.now() - start,
         detail: parseInfo(info),
@@ -78,6 +80,7 @@ async function probe(service: ServiceConfig): Promise<ServiceStatus> {
       return {
         name: service.name,
         url: service.url,
+        displayUrl: service.displayUrl,
         status: 'down',
         latencyMs: performance.now() - start,
         error: err instanceof Error ? err.message : String(err),
@@ -99,6 +102,7 @@ async function probe(service: ServiceConfig): Promise<ServiceStatus> {
     return {
       name: service.name,
       url: service.url,
+      displayUrl: service.displayUrl,
       status: res.ok ? 'up' : 'down',
       latencyMs: performance.now() - start,
       detail,
@@ -107,6 +111,7 @@ async function probe(service: ServiceConfig): Promise<ServiceStatus> {
     return {
       name: service.name,
       url: service.url,
+      displayUrl: service.displayUrl,
       status: 'down',
       latencyMs: performance.now() - start,
       error: err instanceof Error ? err.message : String(err),

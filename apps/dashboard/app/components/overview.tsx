@@ -20,7 +20,7 @@ export default function Overview() {
             <h3 style={{ margin: '0 0 0.5rem', fontSize: '1rem' }}>
               <span style={{ color: service.status === 'up' ? 'green' : 'red' }}>●</span> {service.name}
             </h3>
-            <p style={{ margin: '0.25rem 0', fontSize: '0.8rem', color: '#666' }}>{service.url}</p>
+            <p style={{ margin: '0.25rem 0', fontSize: '0.8rem', color: '#666' }}>{service.displayUrl ?? service.url}</p>
             {service.latencyMs !== undefined && (
               <p style={{ margin: '0.25rem 0', fontSize: '0.8rem' }}>{service.latencyMs.toFixed(1)} ms</p>
             )}
