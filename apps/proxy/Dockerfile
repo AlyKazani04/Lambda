@@ -33,6 +33,7 @@ RUN pnpm --filter shared-types run build && pnpm --filter proxy run build
 
 # ---- dev: source is bind-mounted by compose.dev.yml ---------------------
 FROM deps AS dev
+COPY packages/config/ ./packages/config/
 COPY packages/shared-types/ ./packages/shared-types/
 COPY apps/proxy/ ./apps/proxy/
 RUN pnpm --filter shared-types run build
