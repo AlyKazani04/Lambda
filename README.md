@@ -25,6 +25,22 @@ sudo docker compose up -d      # not: pnpm infra:up
 with `permission denied ... /var/run/docker.sock`. Prefix with `sudo` for now,
 or update the script once decided which way to go.
 
+### Watch mode
+
+```bash
+sudo docker compose -f docker-compose.yml -f compose.dev.yml up --build
+```
+
+Only `apps/proxy/src` and `apps/stub/src` are bind-mounted, and `tsx watch`
+restarts those two services on a source edit. The dashboard stays on its
+production build: `server.ts` owns the `/ws` upgrade, so `next dev` cannot run
+behind it. If file events do not cross the Docker Desktop mount on macOS,
+restart the affected container manually — verify watch behaviour before relying
+on it.
+
+Dockerfile installs are keyed on manifests only and use BuildKit cache mounts,
+so a source edit no longer triggers a `pnpm install` in either stage.
+
 ## Environment
 
 `.env` holds machine-specific config. Two values matter most:

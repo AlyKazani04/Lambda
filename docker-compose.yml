@@ -1,5 +1,6 @@
 services:
   proxy:
+    image: lambda/proxy:dev
     build:
       context: .
       dockerfile: apps/proxy/Dockerfile
@@ -41,6 +42,7 @@ services:
       retries: 5
 
   stub:
+    image: lambda/stub:dev
     build:
       context: .
       dockerfile: apps/stub/Dockerfile
@@ -58,6 +60,7 @@ services:
       start_period: 5s
 
   dashboard:
+    image: lambda/dashboard:dev
     build:
       context: .
       dockerfile: apps/dashboard/Dockerfile
