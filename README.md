@@ -492,8 +492,11 @@ node stress-test/dist/index.js --target http://<laptop-a>:8080 \
   --duration 30000 --concurrency 64 --ramp 5000 --label lan-a
 ```
 
-Omit `--collector`: the collector endpoints are part of F5 and do not exist yet,
-so a run that passes it logs the clock offset as `unavailable` and ships nothing.
+Pass `--collector` on a cross-machine run: the dashboard exposes the collector
+endpoints at `/api/time` and `/api/aggregates`. `./up.sh --remote` prints the URL
+to use. Omitting it ships no aggregates and logs the clock offset as `unavailable`.
+`POST /api/aggregates` is a logging sink for now — it does not render a dashboard
+panel.
 
 ### Configuration
 
@@ -554,10 +557,10 @@ The observed mix prints next to the configured weights.
 
 `clock.ts` records the offset against the collector at run start. Correlating a
 generator timestamp with a proxy timestamp requires the two clocks to agree. The
-collector endpoints (`GET /time`, `POST /aggregates`) are part of F5 and do not
-exist yet — until they do, a run with `--collector` logs the offset as
-`unavailable` and continues with zero, which degrades cross-machine correlation
-rather than the load itself.
+collector endpoints (`GET /time`, `POST /aggregates`) are served by the dashboard;
+`./up.sh --remote` prints the collector URL. Without `--collector` the offset is
+`unavailable`, which degrades cross-machine correlation rather than the load
+itself.
 
 ## Commands
 
@@ -568,6 +571,8 @@ rather than the load itself.
 | `pnpm build`                     | Build all packages                                                 |
 | `pnpm lint`                      | Lint all packages                                                  |
 | `pnpm infra:up` / `infra:down`   | Start/stop Docker services (**needs `sudo`** — see above)          |
+| `./up.sh` / `./down.sh`         | Full-stack harness: healthchecks, collector URLs, netem (see F7)   |
+| `pnpm test:harness`             | Unit-test the harness and both `capture-check.sh` outcomes         |
 | `node stress-test/dist/index.js` | Run the load generator (needs `pnpm build` first; see flags above) |
 | `tools/validate-parser.sh`       | Differential parser validation against tshark (see F8)            |
 | `tools/state-replay.sh`          | Replay a pcap through the B6 state machine (see B6)                |
@@ -617,6 +622,13 @@ no `importers[...]` entry in the lockfile, which then fails
 - TypeScript is pinned to `~5.9`. `typescript-eslint` does not yet support TS 7.
 
 ## Cross-Machine Testing Notes
+
+The one-command harness and the full two-laptop procedure are in
+[docs/cross-machine-runbook.md](docs/cross-machine-runbook.md). netem is
+egress-only (PR #31): the `wan` profile adds ~20 ms to one leg, so expect an RTT
+around 20 ms rather than 40 ms. Every interface has a default qdisc (`mq` on a
+physical NIC); `tools/netem-down.sh` removes only the netem qdisc, never the
+default one.
 
 *Proxy capture in Docker deployment:* The container's netns has only `eth0`/`lo` (`/proc/<pid>/root/sys/class/net`). `CAPTURE_IFACE=wlp0s20f3` does not exist there; `createSession` throws `No such device exists`. The container runs with `CapEff=0` and `CapBnd=0xa80435fb`. Docker does not give non-root containers effective capabilities, so `cap_add: NET_ADMIN` is inert and libpcap cannot open a packet socket (`CAP_NET_RAW may be required`). Consequences: the proxy's live handshake publisher prints nothing; the `.pcap` writer never opens; `apps/proxy/capture.pcap` on the host is stale.
 
