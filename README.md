@@ -226,7 +226,9 @@ node stress-test/dist/index.js --target http://127.0.0.1:8080 \
 
 The netem variant of that check (20 ms ± 5 ms on the physical NIC, traffic
 from the second laptop) still needs the two-laptop rig; a local run does not
-substitute for it.
+substitute for it. Do not run the load test with the shortened demo thresholds:
+a 1.5 s idle limit is below the natural gap between keep-alive requests under
+concurrency and will trip the detector. Use the defaults for that check.
 
 ## B9 — exporting a capture
 
