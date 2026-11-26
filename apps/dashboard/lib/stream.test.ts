@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseFrameEvent, parseRetransmitEvent, parseRttEvent, parseTcpEvent } from './stream.js';
+import { parseFrameEvent, parseRetransmitEvent, parseRttEvent, parseSlowlorisEvent, parseTcpEvent } from './stream.js';
 
 const frame = {
   traceId: 'abc',
@@ -98,4 +98,28 @@ test('accepts well-formed retransmit events and rejects malformed ones', () => {
   assert.equal(parseRetransmitEvent({ ...retransmit, cause: 'weird' }), null);
   const timeout = { ...retransmit, kind: 'full', cause: 'timeout', observedRtoMs: 240 };
   assert.deepEqual(parseRetransmitEvent(timeout), timeout);
+});
+
+const slowloris = {
+  phase: 'headers',
+  reason: 'headers_idle',
+  client: '127.0.0.1:4321',
+  elapsedMs: 15_000,
+  bytesReceived: 12,
+  timestamp: 1_700_000_000_000,
+};
+
+test('accepts slowloris events and rejects an unknown phase', () => {
+  assert.deepEqual(parseSlowlorisEvent(slowloris), {
+    ...slowloris,
+    traceId: undefined,
+    path: undefined,
+  });
+  assert.deepEqual(parseSlowlorisEvent({ ...slowloris, traceId: 'trace-1', path: '/api/slow' }), {
+    ...slowloris,
+    traceId: 'trace-1',
+    path: '/api/slow',
+  });
+  assert.equal(parseSlowlorisEvent({ ...slowloris, phase: 'bogus' }), null);
+  assert.equal(parseSlowlorisEvent({ ...slowloris, elapsedMs: '15' }), null);
 });
