@@ -17,9 +17,26 @@ import { matchRoute, pathnameOf } from './router.js';
 import { createPools, startDiscovery } from './upstream.js';
 import { resolveTraceId } from './correlation/trace-id.js';
 import { createFrameRecorder } from './l7/frame-logger.js';
+import { createSlowlorisWatchdog } from './l7/slowloris.js';
 
 const config = loadConfig();
 const bus = createFrameBus({ url: config.redisUrl, historyLimit: config.historyLimit });
+
+const slowloris = createSlowlorisWatchdog({
+  thresholds: {
+    enabled: config.slowlorisEnabled,
+    ttfbMs: config.slowlorisTtfbMs,
+    headersMs: config.slowlorisHeadersMs,
+    bodyMs: config.slowlorisBodyMs,
+    idleMs: config.slowlorisIdleMs,
+  },
+  onTimeout: (event) => {
+    console.warn(
+      `slowloris phase=${event.phase} reason=${event.reason} client=${event.client} ` +
+      `elapsed=${event.elapsedMs}ms bytes=${event.bytesReceived} traceId=${event.traceId ?? '-'}`,
+    );
+  },
+});
 
 const pools = await createPools(config);
 const discovery = startDiscovery(config, pools);
@@ -170,6 +187,7 @@ function handleRequest(
   );
 
   const traceId = resolveTraceId(req);
+  slowloris.associateTrace(req, traceId, pathname);
   stateMachine.associateTrace(
     req.socket.remoteAddress ?? '',
     req.socket.remotePort ?? 0,
@@ -203,11 +221,17 @@ function handleRequest(
   });
 }
 
-const server = createServer(handleRequest);
+const server = createServer((req, res) => {
+  slowloris.onRequest(req, res);
+  handleRequest(req, res);
+});
+
+server.on('connection', (socket) => slowloris.observeConnection(socket));
 
 // A request with Expect: 100-continue arrives here instead of 'request'. The
 // proxy forwards the expectation upstream and relays the interim 100 back.
 server.on('checkContinue', (req, res) => {
+  slowloris.onRequest(req, res);
   handleRequest(req, res, { expectContinue: true });
 });
 
@@ -217,6 +241,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     discovery.stop();
     capture?.stop();
     handshake.close();
+    slowloris.close();
     clearInterval(stateSweep);
     clearInterval(rttSweep);
     clearInterval(retransmitSweep);
@@ -225,9 +250,12 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   });
 }
 
-server.headersTimeout = 65_000;
+// Node's built-in timeouts are total-time limits, not progress-based, and a
+// silent close gives no reason to log. Disable them so the A4 watchdog is the
+// single authority for slow clients; requestTimeout was already disabled.
+server.headersTimeout = 0;
 server.requestTimeout = 0;
-server.keepAliveTimeout = 65_000;
+server.keepAliveTimeout = 0;
 
 server.listen(config.port, config.host, () => {
   const groups = [...pools.values()]
