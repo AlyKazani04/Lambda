@@ -35,6 +35,7 @@ const slowloris = createSlowlorisWatchdog({
       `slowloris phase=${event.phase} reason=${event.reason} client=${event.client} ` +
       `elapsed=${event.elapsedMs}ms bytes=${event.bytesReceived} traceId=${event.traceId ?? '-'}`,
     );
+    bus.publishSlowloris(event);
   },
 });
 

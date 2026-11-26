@@ -22,6 +22,7 @@ class RecordingBus implements FrameBus {
   publishTcpState(): void {}
   publishRtt(): void {}
   publishRetransmit(): void {}
+  publishSlowloris(): void {}
   ready(): Promise<void> { return Promise.resolve(); }
   async close(): Promise<void> {}
 }
