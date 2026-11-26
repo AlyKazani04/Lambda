@@ -176,6 +176,58 @@ physical NIC instead, then replay:
 The live dashboard view is deferred until the Redis transport (F5) merges; the
 publisher port is the seam it plugs into.
 
+## A4 — slowloris detection
+
+`apps/proxy/src/l7/slowloris.ts` watches each client socket with one re-armable
+timer. Any received byte resets it, so a client on a slow link is judged by
+*progress*, not by total connection age. Four phases have separate thresholds:
+`ttfb` (no first byte), `headers`, `body`, and `idle` (after the response on a
+keep-alive connection). Timers are per request on a reused connection. Node's
+own `headersTimeout`, `requestTimeout` and `keepAliveTimeout` are disabled so a
+silent close cannot bypass the reason-logging path.
+
+A tripped connection is destroyed, the reason is logged with phase, elapsed
+idle time and bytes received, and a `slowloris` event is published through the
+Redis bus. The dashboard's **Slowloris** view shows those events; `traceId` and
+`path` are attached only when the request reached route matching.
+
+Thresholds are environment settings, not constants: `SLOWLORIS_ENABLED`,
+`SLOWLORIS_TTFB_MS`, `SLOWLORIS_HEADERS_MS`, `SLOWLORIS_BODY_MS` and
+`SLOWLORIS_IDLE_MS` (defaults 10 s / 15 s / 30 s / 60 s). Shorten them for a
+local demo; keep them well above the netem path latency for real runs.
+
+### Verifying A4
+
+```bash
+pnpm test                                   # watchdog phases, resets, cleanup
+
+# Against a proxy started with 1500 ms thresholds:
+tools/slowloris-attack.sh --mode headers --interval 2500 --duration 4000
+tools/slowloris-attack.sh --mode body --duration 4000
+tools/slowloris-attack.sh --mode idle --duration 4000
+# The control must NOT be killed:
+tools/slowloris-attack.sh --mode trickle --interval 200 --duration 4000
+```
+
+Each attack mode exits zero when at least one connection was closed; the
+`trickle` control exits zero only when none were. The `body` mode needs an
+upstream that waits for the full request body before responding — the stock
+stub answers immediately, which moves the connection into the idle phase
+instead. Point `UPSTREAM_TARGETS_API` at such an upstream when demoing that
+variant; the unit test covers the body timer without one.
+
+The full load generator must
+then run with detection enabled and produce zero false positives:
+
+```bash
+node stress-test/dist/index.js --target http://127.0.0.1:8080 \
+  --duration 30000 --concurrency 64 --ramp 5000
+```
+
+The netem variant of that check (20 ms ± 5 ms on the physical NIC, traffic
+from the second laptop) still needs the two-laptop rig; a local run does not
+substitute for it.
+
 ## B9 — exporting a capture
 
 The proxy records every captured packet (B1) into `PCAP_EXPORT_PATH`
