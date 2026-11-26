@@ -18,4 +18,4 @@ if [ "$COUNT" -eq 0 ]; then
   echo "NO TRAFFIC on $IFACE"
   exit 1
 fi
-EOF
+echo "traffic present on $IFACE"
