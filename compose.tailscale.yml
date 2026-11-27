@@ -1,0 +1,9 @@
+services:
+  proxy:
+    ports: !override
+      - "${TAILSCALE_IP}:8080:8080"
+  dashboard:
+    ports: !override
+      - "${TAILSCALE_IP}:3000:3000"
+    environment:
+      DASHBOARD_SERVICES: '[{"name":"proxy","url":"http://proxy:8080","displayUrl":"http://${TAILSCALE_IP}:8080","healthPath":"/health"},{"name":"dashboard","url":"http://127.0.0.1:3000","displayUrl":"http://${TAILSCALE_IP}:3000","healthPath":"/api/time"},{"name":"stub","url":"http://stub:3001","healthPath":"/health"},{"name":"redis","url":"redis://redis:6379"}]'

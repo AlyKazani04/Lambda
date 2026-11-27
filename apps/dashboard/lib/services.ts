@@ -2,6 +2,8 @@ export interface ServiceConfig {
   name: string;
   /** http(s):// for health probes, redis:// for INFO. */
   url: string;
+  /** URL shown in the UI when the probe URL is internal to the compose network. */
+  displayUrl?: string;
   healthPath?: string;
 }
 
@@ -27,8 +29,16 @@ export function services(): ServiceConfig[] {
     if (!Array.isArray(parsed)) return [...DEFAULT_SERVICES];
     return parsed.filter((entry): entry is ServiceConfig => {
       if (typeof entry !== 'object' || entry === null) return false;
-      const { name, url } = entry as { name?: unknown; url?: unknown };
-      return typeof name === 'string' && typeof url === 'string';
+      const { name, url, displayUrl } = entry as {
+        name?: unknown;
+        url?: unknown;
+        displayUrl?: unknown;
+      };
+      return (
+        typeof name === 'string' &&
+        typeof url === 'string' &&
+        (displayUrl === undefined || typeof displayUrl === 'string')
+      );
     });
   } catch {
     return [...DEFAULT_SERVICES];

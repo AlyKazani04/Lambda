@@ -99,12 +99,17 @@ jobs:
       # depends_on: service_healthy ordering, env_file injection, CMD, and the
       # USER node drop.
       - name: Start stack
-        run: docker compose up -d --wait --wait-timeout 90
+        run: docker compose up -d --wait --wait-timeout 90 --scale stub=3
 
       - name: Smoke test services
         run: |
           set -euo pipefail
-          for port in 8080 3001; do
+          replicas=$(docker compose ps -q stub | wc -l)
+          if [ "$replicas" -ne 3 ]; then
+            echo "expected 3 stub replicas, found ${replicas}" >&2
+            exit 1
+          fi
+          for port in 8080 3001 3002 3003; do
             for attempt in $(seq 1 15); do
               if curl -fsS "http://127.0.0.1:${port}/health"; then
                 echo " <- :${port} ok"

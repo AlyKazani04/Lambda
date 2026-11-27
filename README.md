@@ -52,7 +52,7 @@ so a source edit no longer triggers a `pnpm install` in either stage.
 
 | Variable          | Notes                                                                                                                                                                                  |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CAPTURE_IFACE`   | **Must be the physical NIC, never `lo`.** A container's loopback is namespace-isolated and sees no host traffic — capture goes silent in a way that looks identical to a broken parser |
+| `CAPTURE_IFACE`   | Host-only capture NIC, never `lo`. `tools/capture-check.sh` and host `tshark` use it; Compose clears it inside the proxy container because the host NIC is not visible there |
 | `PROXY_PORT` etc. | Change only if a port is genuinely taken                                                                                                                                               |
 
 Redis is reached over the compose network and is **not** published to the host
@@ -110,14 +110,12 @@ Default routing table: `/api/*` and `/timeline/*` both go to the stub service.
 
 ### Load balancing across N instances
 
-The instance list comes from resolving `UPSTREAM_HOST`, so scaling the stub
-service scales the rotation — no code change and no list to maintain:
+The harness (`./up.sh`) and `pnpm infra:up` start three stub replicas by
+default. The base compose file publishes a host-port range `3001-3003` so each
+replica gets a distinct host port, while the proxy resolves the `stub` service
+name on the compose network and round-robins across all three addresses.
 
 ```bash
-# The base compose file publishes the stub on a fixed host port for the CI
-# smoke test, and N replicas cannot share one host port, so drop that mapping
-# for a scaled run (compose.override.yml is the place to do it).
-docker compose -f docker-compose.yml -f compose.override.yml up -d --scale stub=3
 docker compose logs -f proxy | grep group=api     # one line per request
 ```
 
@@ -556,8 +554,11 @@ node stress-test/dist/index.js --target http://<laptop-a>:8080 \
   --duration 30000 --concurrency 64 --ramp 5000 --label lan-a
 ```
 
-Omit `--collector`: the collector endpoints are part of F5 and do not exist yet,
-so a run that passes it logs the clock offset as `unavailable` and ships nothing.
+Pass `--collector` on a cross-machine run: the dashboard exposes the collector
+endpoints at `/api/time` and `/api/aggregates`. `./up.sh --remote` prints the URL
+to use. Omitting it ships no aggregates and logs the clock offset as `unavailable`.
+`POST /api/aggregates` is a logging sink for now — it does not render a dashboard
+panel.
 
 ### Configuration
 
@@ -618,10 +619,10 @@ The observed mix prints next to the configured weights.
 
 `clock.ts` records the offset against the collector at run start. Correlating a
 generator timestamp with a proxy timestamp requires the two clocks to agree. The
-collector endpoints (`GET /time`, `POST /aggregates`) are part of F5 and do not
-exist yet — until they do, a run with `--collector` logs the offset as
-`unavailable` and continues with zero, which degrades cross-machine correlation
-rather than the load itself.
+collector endpoints (`GET /time`, `POST /aggregates`) are served by the dashboard;
+`./up.sh --remote` prints the collector URL. Without `--collector` the offset is
+`unavailable`, which degrades cross-machine correlation rather than the load
+itself.
 
 ## Commands
 
@@ -632,6 +633,8 @@ rather than the load itself.
 | `pnpm build`                     | Build all packages                                                 |
 | `pnpm lint`                      | Lint all packages                                                  |
 | `pnpm infra:up` / `infra:down`   | Start/stop Docker services (**needs `sudo`** — see above)          |
+| `./up.sh` / `./down.sh`         | Full-stack harness: healthchecks, collector URLs, netem (see F7)   |
+| `pnpm test:harness`             | Unit-test the harness and both `capture-check.sh` outcomes         |
 | `node stress-test/dist/index.js` | Run the load generator (needs `pnpm build` first; see flags above) |
 | `tools/validate-parser.sh`       | Differential parser validation against tshark (see F8)            |
 | `tools/state-replay.sh`          | Replay a pcap through the B6 state machine (see B6)                |
@@ -682,7 +685,14 @@ no `importers[...]` entry in the lockfile, which then fails
 
 ## Cross-Machine Testing Notes
 
-*Proxy capture in Docker deployment:* The container's netns has only `eth0`/`lo` (`/proc/<pid>/root/sys/class/net`). `CAPTURE_IFACE=wlp0s20f3` does not exist there; `createSession` throws `No such device exists`. The container runs with `CapEff=0` and `CapBnd=0xa80435fb`. Docker does not give non-root containers effective capabilities, so `cap_add: NET_ADMIN` is inert and libpcap cannot open a packet socket (`CAP_NET_RAW may be required`). Consequences: the proxy's live handshake publisher prints nothing; the `.pcap` writer never opens; `apps/proxy/capture.pcap` on the host is stale.
+The one-command harness and the full two-laptop procedure are in
+[docs/cross-machine-runbook.md](docs/cross-machine-runbook.md). netem is
+egress-only (PR #31): the `wan` profile adds ~20 ms to one leg, so expect an RTT
+around 20 ms rather than 40 ms. Every interface has a default qdisc (`mq` on a
+physical NIC); `tools/netem-down.sh` removes only the netem qdisc, never the
+default one.
+
+*Proxy capture in Docker deployment:* The container's netns has only `eth0`/`lo` (`/proc/<pid>/root/sys/class/net`). `CAPTURE_IFACE=wlp0s20f3` does not exist there, so Compose now clears the variable inside the proxy container; capture starts disabled with one informational line instead of a missing-device error. Even if set, the container runs with `CapEff=0` and `CapBnd=0xa80435fb`. Docker does not give non-root containers effective capabilities, so `cap_add: NET_ADMIN` is inert and libpcap cannot open a packet socket (`CAP_NET_RAW may be required`). Consequences: the proxy's live handshake publisher prints nothing; the `.pcap` writer never opens; `apps/proxy/capture.pcap` on the host is stale.
 
 *Host capture + replay workaround:* The working route is host-side capture plus offline replay — the same decode and analyse path, no capture privileges needed by the analyser:
 ```bash

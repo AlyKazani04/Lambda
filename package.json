@@ -4,9 +4,12 @@
   "description": "A Custom Reverse Proxy with Real-Time Packet Capture and Traffic Analysis",
   "main": "index.js",
   "scripts": {
-    "infra:up": "docker compose up -d",
+    "infra:up": "docker compose up -d --scale stub=3",
     "infra:down": "docker compose down",
     "infra:logs": "docker compose logs -f",
+    "stack:up": "./up.sh",
+    "stack:down": "./down.sh",
+    "test:harness": "node --test tools/harness.test.mjs",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",

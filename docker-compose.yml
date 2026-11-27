@@ -11,6 +11,10 @@ services:
       UPSTREAM_HOST: stub
       UPSTREAM_PORT: 3001
       UPSTREAM_INSTANCES: 3
+      # The host NIC is not visible inside the container. Capture runs on the
+      # host; disabling it here keeps the proxy from logging a missing-device
+      # error on every start.
+      CAPTURE_IFACE: ""
     # NET_ADMIN grants network administration Does NOT make the container root
     cap_add:
       - NET_ADMIN
@@ -51,7 +55,9 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "127.0.0.1:3001:3001"
+      # Three replicas get three distinct host ports; the proxy reaches them
+      # by DNS inside the compose network.
+      - "127.0.0.1:3001-3003:3001"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

@@ -14,7 +14,7 @@ export default function ServiceDetail({ name }: { name: string }) {
     <div>
       <h2>{service.name}</h2>
       <p>
-        {service.url} — {service.status === 'up' ? 'up' : 'down'}
+        {service.displayUrl ?? service.url} — {service.status === 'up' ? 'up' : 'down'}
         {service.latencyMs !== undefined ? ` (${service.latencyMs.toFixed(1)} ms)` : ''}
       </p>
       <pre style={{ background: '#f6f6f6', padding: '1rem', overflow: 'auto' }}>
