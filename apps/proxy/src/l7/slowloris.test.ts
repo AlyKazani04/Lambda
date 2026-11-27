@@ -105,6 +105,7 @@ test('ttfb timeout fires with a reason and destroys the socket', () => {
   assert.equal(h.events[0]?.phase, 'ttfb');
   assert.equal(h.events[0]?.reason, 'no_bytes_before_first_byte');
   assert.equal(h.events[0]?.elapsedMs, 100);
+  assert.equal(h.events[0]?.timestamp, 100, 'event timestamp uses the injected clock');
   assert.equal(h.events[0]?.client, '127.0.0.1:4321');
   assert.equal(h.socket.destroyed, true);
 });

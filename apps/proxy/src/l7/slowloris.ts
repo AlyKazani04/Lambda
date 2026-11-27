@@ -101,7 +101,7 @@ export function createSlowlorisWatchdog(options: SlowlorisOptions): SlowlorisWat
       client: `${state.socket.remoteAddress ?? ''}:${state.socket.remotePort ?? 0}`,
       elapsedMs: Math.max(0, now() - state.lastProgressAt),
       bytesReceived: state.phaseBytes,
-      timestamp: Date.now(),
+      timestamp: now(),
       ...(state.traceId === undefined ? {} : { traceId: state.traceId }),
       ...(state.path === undefined ? {} : { path: state.path }),
     };
