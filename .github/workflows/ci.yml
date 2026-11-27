@@ -32,8 +32,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # @audc/pcap ships a linux-x64 prebuilt binary, so no compiler
-      # toolchain is needed on the runner.
+      # @audc/pcap has no prebuild for this Node ABI and compiles from source
+      # during pnpm install. GitHub-hosted ubuntu runners already ship the
+      # compiler toolchain; in the images it is installed in the base stage
+      # BEFORE pnpm install (see apps/proxy/Dockerfile).
       - name: Typecheck
         run: pnpm typecheck
 
@@ -43,23 +45,16 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      # Live pcap capture needs CAP_NET_RAW and access to a host interface,
-      # which GitHub-hosted runners do not grant to unprivileged containers.
-      # So this stays off until there is a suite that needs no real capture:
-      # unit tests over the packet parser, the RTT estimator, and sequence
-      # reassembly (issues #21, #24, #26). Those are pure functions over known
-      # inputs, need no privileges, and are where the real test value is
-      # anyway — B5 in particular needs hand-computed expected values.
-      #
-      # Note `pnpm test` currently has no test files; the script exists so
-      # this step has something to invoke once there are tests.
-      # - name: Test (unit)
-      #   run: pnpm test
+      # Unit tests are pure functions over known inputs, so they need neither
+      # CAP_NET_RAW nor a live interface. Live pcap capture stays out: GitHub-
+      # hosted runners do not grant CAP_NET_RAW to unprivileged jobs.
+      - name: Test (unit)
+        run: pnpm test
 
-  # Builds both images and runs the stack briefly. This is the only check that
-  # can catch Dockerfile and compose errors — the TypeScript job above is
-  # blind to them, which is how a musl/glibc mismatch, a missing pnpm
-  # install, or a wrong build context reaches main unnoticed.
+  # Builds three images (and pulls Redis) and runs the stack briefly. This is
+  # the only check that can catch Dockerfile and compose errors — the TypeScript
+  # job above is blind to them, which is how a musl/glibc mismatch, a missing
+  # pnpm install, or a wrong build context reaches main unnoticed.
   #
   # Separate job so a Docker failure is attributable at a glance instead of
   # buried in lint output.
@@ -91,10 +86,13 @@ jobs:
       # Bake reads the same compose file as the smoke test, so build
       # definitions cannot drift. Cross-run cache matters now that the
       # dependency tree is large; without it every CI run reinstalls.
+      # The second cache-from falls back to main so a new PR branch starts
+      # warm instead of paying for a cold dependency install.
       - name: Build images
         run: |
           docker buildx bake --load -f docker-compose.yml \
             --set "*.cache-from=type=gha,scope=lambda-${{ github.ref_name }}" \
+            --set "*.cache-from=type=gha,scope=lambda-main" \
             --set "*.cache-to=type=gha,mode=max,scope=lambda-${{ github.ref_name }}"
 
       # Exercises what unit tests never touch: healthcheck definitions,
