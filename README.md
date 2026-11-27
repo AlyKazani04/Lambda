@@ -38,6 +38,11 @@ behind it. If file events do not cross the Docker Desktop mount on macOS,
 restart the affected container manually — verify watch behaviour before relying
 on it.
 
+The overlay tags its images `lambda/proxy:local-dev` and `lambda/stub:local-dev`
+rather than reusing the production `:dev` tags. That keeps the production images
+untouched, so a plain `sudo docker compose up -d` afterwards starts the
+production build without needing `--build` or a cache clear.
+
 Dockerfile installs are keyed on manifests only and use BuildKit cache mounts,
 so a source edit no longer triggers a `pnpm install` in either stage.
 

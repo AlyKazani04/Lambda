@@ -4,6 +4,10 @@
 # compose command, including the CI smoke test's fixed port mappings.
 services:
   proxy:
+    # Build under a distinct tag so a later plain `docker compose up -d` still
+    # uses the production image. Reusing lambda/proxy:dev would leave the tsx
+    # watch target running under that tag after the overlay comes down.
+    image: lambda/proxy:local-dev
     build:
       context: .
       dockerfile: apps/proxy/Dockerfile
@@ -15,6 +19,8 @@ services:
       - ./apps/proxy/src:/repo/apps/proxy/src
 
   stub:
+    # Same tagging rationale as proxy above.
+    image: lambda/stub:local-dev
     build:
       context: .
       dockerfile: apps/stub/Dockerfile
