@@ -1,4 +1,4 @@
-import type { FrameEvent, RetransmitEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
+import type { FrameEvent, RetransmitEvent, SlowlorisEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
 
 /**
  * WebSocket payloads cross the wire as JSON and may come from a proxy running
@@ -205,5 +205,30 @@ export function parseTcpStateEvent(payload: unknown): TcpStateEvent | null {
     traceId: hasString(payload, 'traceId') ? (payload['traceId'] as string) : undefined,
     path: hasString(payload, 'path') ? (payload['path'] as string) : undefined,
     illegal: payload['illegal'] === true,
+  };
+}
+
+export function parseSlowlorisEvent(payload: unknown): SlowlorisEvent | null {
+  if (!isRecord(payload)) return null;
+  const phase = payload['phase'];
+  if (
+    (phase !== 'ttfb' && phase !== 'headers' && phase !== 'body' && phase !== 'idle') ||
+    !hasString(payload, 'reason') ||
+    !hasString(payload, 'client') ||
+    !isFiniteNumber(payload['elapsedMs']) ||
+    !isFiniteNumber(payload['bytesReceived']) ||
+    !isFiniteNumber(payload['timestamp'])
+  ) {
+    return null;
+  }
+  return {
+    phase,
+    reason: payload['reason'] as string,
+    client: payload['client'] as string,
+    elapsedMs: payload['elapsedMs'] as number,
+    bytesReceived: payload['bytesReceived'] as number,
+    timestamp: payload['timestamp'] as number,
+    traceId: hasString(payload, 'traceId') ? (payload['traceId'] as string) : undefined,
+    path: hasString(payload, 'path') ? (payload['path'] as string) : undefined,
   };
 }
