@@ -56,8 +56,7 @@ export function startCapture(options: CaptureOptions): CaptureHandle {
 
   const iface = (options.iface ?? process.env.CAPTURE_IFACE ?? '').trim();
   if (iface === '') {
-    const error = new Error('CAPTURE_IFACE is not set; capture disabled');
-    onError(error);
+    log('capture disabled: CAPTURE_IFACE is not set');
     return {
       iface: '',
       filter: '',
