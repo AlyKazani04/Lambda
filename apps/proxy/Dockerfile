@@ -1,49 +1,56 @@
-# ---- build stage -------------------------------------------------------
-FROM node:26-slim AS builder
+# syntax=docker/dockerfile:1.7
 
+# ---- base: pin the toolchain once ---------------------------------------
+FROM node:26-slim AS base
 RUN npm install -g pnpm@12.6.0
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpcap-dev build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /repo
 
+# @audc/pcap has no prebuild for this Node ABI, so its install script compiles
+# from source. The native toolchain must exist BEFORE pnpm install, not just
+# before tsc — otherwise the install layer fails before it can be cached.
+FROM base AS native
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+      libpcap-dev build-essential libpcap0.8 iproute2
+
+# ---- deps: keyed on manifests only --------------------------------------
+# Source files are deliberately absent here. A code edit must not invalidate
+# the install layer; only a package.json or lockfile change should.
+FROM native AS deps
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+COPY packages/shared-types/package.json ./packages/shared-types/
+COPY apps/proxy/package.json ./apps/proxy/
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile
+
+# ---- builder ------------------------------------------------------------
+FROM deps AS builder
 COPY packages/config/ ./packages/config/
 COPY packages/shared-types/ ./packages/shared-types/
 COPY apps/proxy/ ./apps/proxy/
-
-# --frozen-lockfile: fail rather than silently mutate the lockfile.
-RUN pnpm install --frozen-lockfile
-
 RUN pnpm --filter shared-types run build && pnpm --filter proxy run build
 
-# ---- runtime stage -----------------------------------------------------
-FROM node:26-slim AS runner
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpcap0.8 iproute2 \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /repo
-
-# Re-resolve production deps from the same lockfile
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+# ---- dev: source is bind-mounted by compose.dev.yml ---------------------
+FROM deps AS dev
 COPY packages/config/ ./packages/config/
+COPY packages/shared-types/ ./packages/shared-types/
+COPY apps/proxy/ ./apps/proxy/
+RUN pnpm --filter shared-types run build
+USER node
+WORKDIR /repo/apps/proxy
+CMD ["./node_modules/.bin/tsx", "watch", "src/index.ts"]
+
+# ---- runtime ------------------------------------------------------------
+FROM native AS runner
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/shared-types/package.json ./packages/shared-types/
 COPY apps/proxy/package.json ./apps/proxy/
-
-RUN npm install -g pnpm@12.6.0 \
-    && pnpm install --frozen-lockfile --prod \
-    && pnpm store prune
-
+# Cached until a manifest changes; a source edit never reinstalls here.
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --prod
 COPY --from=builder --chown=node:node /repo/apps/proxy/dist ./apps/proxy/dist
 COPY --from=builder --chown=node:node /repo/packages/shared-types/dist ./packages/shared-types/dist
-
-# Drop root
 USER node
-
 EXPOSE 8080
-
 CMD ["node", "apps/proxy/dist/index.js"]
