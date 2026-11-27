@@ -89,6 +89,8 @@ test('LAN mode expects wildcard bindings and prints the LAN IP', () => {
     { host: '0.0.0.0', port: 3000 },
     { host: '0.0.0.0', port: 8080 },
     { host: '127.0.0.1', port: 3001 },
+    { host: '127.0.0.1', port: 3002 },
+    { host: '127.0.0.1', port: 3003 },
   ]);
   assert.equal(serviceHost(options), '127.0.0.1');
   assert.equal(displayHost(options), '192.168.1.5');
@@ -190,7 +192,7 @@ test('up waits for host health before applying netem and checks the qdisc', asyn
   await up(options, deps);
 
   const calls = deps.calls;
-  const composeUp = calls.findIndex((call) => call.includes('up -d --wait'));
+  const composeUp = calls.findIndex((call) => call.includes('up -d --wait --scale stub=3'));
   const firstFetch = calls.findIndex((call) => call.startsWith('FETCH '));
   const netemUp = calls.findIndex((call) => call.includes('netem-up.sh'));
   const qdiscCheck = calls.findIndex((call) => call.includes('qdisc show'));
@@ -270,6 +272,8 @@ test('expectedBindings and serviceHost switch with remote mode', () => {
   assert.deepEqual(expectedBindings(local), [
     { host: '127.0.0.1', port: 3000 },
     { host: '127.0.0.1', port: 3001 },
+    { host: '127.0.0.1', port: 3002 },
+    { host: '127.0.0.1', port: 3003 },
     { host: '127.0.0.1', port: 8080 },
   ]);
   assert.equal(serviceHost(local), '127.0.0.1');
@@ -277,6 +281,8 @@ test('expectedBindings and serviceHost switch with remote mode', () => {
   const remote = { ...local, remote: true, tailscaleIp: '100.64.0.1' };
   assert.deepEqual(expectedBindings(remote), [
     { host: '127.0.0.1', port: 3001 },
+    { host: '127.0.0.1', port: 3002 },
+    { host: '127.0.0.1', port: 3003 },
     { host: '100.64.0.1', port: 8080 },
     { host: '100.64.0.1', port: 3000 },
   ]);

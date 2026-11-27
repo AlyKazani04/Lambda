@@ -138,6 +138,8 @@ export function expectedBindings(options) {
   if (options.remote && options.tailscaleIp !== null) {
     return [
       { host: '127.0.0.1', port: 3001 },
+      { host: '127.0.0.1', port: 3002 },
+      { host: '127.0.0.1', port: 3003 },
       { host: options.tailscaleIp, port: 8080 },
       { host: options.tailscaleIp, port: 3000 },
     ];
@@ -147,11 +149,15 @@ export function expectedBindings(options) {
       { host: '0.0.0.0', port: 3000 },
       { host: '0.0.0.0', port: 8080 },
       { host: '127.0.0.1', port: 3001 },
+      { host: '127.0.0.1', port: 3002 },
+      { host: '127.0.0.1', port: 3003 },
     ];
   }
   return [
     { host: '127.0.0.1', port: 3000 },
     { host: '127.0.0.1', port: 3001 },
+    { host: '127.0.0.1', port: 3002 },
+    { host: '127.0.0.1', port: 3003 },
     { host: '127.0.0.1', port: 8080 },
   ];
 }
@@ -271,7 +277,7 @@ function checkPorts(options, deps) {
       `ports already in use:\n${detail}\nStop the owner or run ./down.sh before starting again`,
     );
   }
-  deps.log('OK ports: 3000, 3001, 8080 and Tailscale bindings are free');
+  deps.log(`OK ports: ${expectedBindings(options).map((b) => `${b.host}:${b.port}`).join(', ')} are free`);
 }
 
 function preflight(options, deps) {
@@ -417,6 +423,8 @@ function printSummary(options, deps) {
   if (options.netemProfile !== 'off') {
     deps.log(`  netem:     ${options.netemProfile} on ${options.iface} (egress-only, ~20 ms RTT for wan)`);
   }
+  deps.log('  stubs:     3 replicas behind upstream DNS round-robin');
+  deps.log('             verify: docker compose logs proxy | grep upstreams');
   if (options.remote || options.lan) {
     deps.log('');
     deps.log('On Laptop B:');
@@ -446,7 +454,7 @@ export async function up(options, deps = defaultDeps) {
 
     stackStarted = true;
     const [command, args] = composeCommand(options);
-    run(deps, options, 'compose-up', command, [...args, 'up', '-d', '--wait'], {
+    run(deps, options, 'compose-up', command, [...args, 'up', '-d', '--wait', '--scale', 'stub=3'], {
       env: composeEnv(options),
     });
 
