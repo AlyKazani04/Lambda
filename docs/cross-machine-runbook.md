@@ -46,7 +46,7 @@ SUDO=1 ./up.sh --lan             # LAN bindings, no Tailscale needed
 
 You do not supply an IP for either mode. `--remote` detects the tailnet IP with
 `tailscale ip -4` and exits with a clear message if Tailscale is stopped;
-`--lan` detects the LAN IPv4 with `hostname -I`. The IP flags below are overrides
+`--lan` detects the LAN IPv4 from local network interfaces. The IP flags below are overrides
 only, for machines where auto-detection picks the wrong interface.
 
 `./up.sh` is the same command via `pnpm stack:up`. Flags:

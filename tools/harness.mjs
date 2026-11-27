@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,7 +19,7 @@ Lambda stack harness
 Flags
   --remote                 bind proxy and dashboard to the Tailscale IP
   --lan                    publish proxy and dashboard on 0.0.0.0 for a LAN run
-  --lan-ip <ip>            LAN IP to print; detected with hostname -I by default
+  --lan-ip <ip>            LAN IP to print; detected from local interfaces by default
   --tailscale-ip <ip>      use this IP instead of detecting it
   --netem <profile|off>    wan|mild|fast|lossy|off (default: $NETEM_PROFILE or wan)
   --iface <name>           physical NIC for capture and netem (default: $CAPTURE_IFACE)
@@ -203,10 +204,31 @@ export function findPortConflicts(listeners, bindings) {
   return conflicts;
 }
 
+const SKIP_INTERFACES = /^(lo|docker|br-|veth|tailscale)/u;
+const PRIVATE_IPV4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/u;
+
+export function detectLanIp(interfaces = networkInterfaces()) {
+  const candidates = [];
+  for (const [name, entries] of Object.entries(interfaces)) {
+    if (SKIP_INTERFACES.test(name)) continue;
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      const parts = entry.address.split('.').map(Number);
+      if (parts.length !== 4 || parts[0] === 127) continue;
+      if (parts[0] === 169 && parts[1] === 254) continue;
+      if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) continue;
+      candidates.push({ address: entry.address, preferred: PRIVATE_IPV4.test(entry.address) });
+    }
+  }
+  candidates.sort((a, b) => Number(b.preferred) - Number(a.preferred));
+  return candidates[0]?.address ?? null;
+}
+
 export const defaultDeps = {
   env: process.env,
   existsSync,
   isRoot: () => typeof process.getuid === 'function' && process.getuid() === 0,
+  detectLanIp,
   exec(command, args, options = {}) {
     const result = spawnSync(command, args, {
       cwd: ROOT,
@@ -317,10 +339,8 @@ function preflight(options, deps) {
   }
 
   if (options.lan && options.lanIp === null) {
-    const detected = deps.exec('hostname', ['-I']);
-    const ip = detected.stdout.trim().split(/\s+/u)
-      .find((entry) => /^\d+\.\d+\.\d+\.\d+$/u.test(entry));
-    if (detected.code !== 0 || ip === undefined) {
+    const ip = deps.detectLanIp();
+    if (ip === null) {
       throw new HarnessError('preflight', 'could not detect a LAN IPv4 address; pass --lan-ip');
     }
     options.lanIp = ip;

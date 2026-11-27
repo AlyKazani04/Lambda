@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   ROOT,
   composeCommand,
+  detectLanIp,
   displayHost,
   down,
   expectedBindings,
@@ -29,6 +30,7 @@ function makeDeps(overrides = {}) {
     env: {},
     existsSync: () => true,
     isRoot: () => true,
+    detectLanIp: () => '192.168.1.5',
     log: () => {},
     exec(command, args) {
       calls.push([command, ...args].join(' '));
@@ -367,4 +369,14 @@ test('down skips all tc calls when netem is off', async () => {
   assert.ok(!deps.calls.some((call) => call.includes('netem-down.sh')));
   assert.ok(!deps.calls.some((call) => call.includes('qdisc show')));
   assert.ok(deps.calls.some((call) => call.includes('down -v --remove-orphans')));
+});
+
+test('detectLanIp picks a private LAN address and skips virtual interfaces', () => {
+  const ip = detectLanIp({
+    lo: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
+    docker0: [{ family: 'IPv4', address: '172.17.0.1', internal: false }],
+    tailscale0: [{ family: 'IPv4', address: '100.121.185.53', internal: false }],
+    wlp0s20f3: [{ family: 'IPv4', address: '192.168.1.6', internal: false }],
+  });
+  assert.equal(ip, '192.168.1.6');
 });
