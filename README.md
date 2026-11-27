@@ -183,8 +183,10 @@ timer. Any received byte resets it, so a client on a slow link is judged by
 *progress*, not by total connection age. Four phases have separate thresholds:
 `ttfb` (no first byte), `headers`, `body`, and `idle` (after the response on a
 keep-alive connection). Timers are per request on a reused connection. Node's
-own `headersTimeout`, `requestTimeout` and `keepAliveTimeout` are disabled so a
-silent close cannot bypass the reason-logging path.
+own `headersTimeout`, `requestTimeout` and `keepAliveTimeout` remain as a
+backstop one second above the longest threshold. The watchdog normally fires
+first and records a reason; the backstop bounds a socket if its timer never
+runs.
 
 A tripped connection is destroyed, the reason is logged with phase, elapsed
 idle time and bytes received, and a `slowloris` event is published through the
@@ -199,6 +201,10 @@ Thresholds are environment settings, not constants: `SLOWLORIS_ENABLED`,
 `SLOWLORIS_TTFB_MS`, `SLOWLORIS_HEADERS_MS`, `SLOWLORIS_BODY_MS` and
 `SLOWLORIS_IDLE_MS` (defaults 10 s / 15 s / 30 s / 60 s). Shorten them for a
 local demo; keep them well above the netem path latency for real runs.
+
+`SLOWLORIS_ENABLED=false` switches off progress detection and its reason
+logging, leaving only the coarse Node-level backstop. The safe operating point
+is `SLOWLORIS_ENABLED=true` with the defaults above.
 
 ### Verifying A4
 
