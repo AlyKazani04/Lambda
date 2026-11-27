@@ -52,6 +52,20 @@ export const DEFAULT_SLOWLORIS_HEADERS_MS = 15_000;
 export const DEFAULT_SLOWLORIS_BODY_MS = 30_000;
 export const DEFAULT_SLOWLORIS_IDLE_MS = 60_000;
 
+// Node's own timeouts are total-time limits and give no reason when they fire,
+// so the A4 watchdog remains the reporting authority. It must not be the only
+// protection though: when it is disabled, or if its timer never runs, a client
+// could otherwise hold a socket forever. A ceiling just above the longest
+// watchdog threshold covers both cases while letting the watchdog fire first.
+export function timeoutBackstopMs(config: ProxyConfig): number {
+  return Math.max(
+    config.slowlorisTtfbMs,
+    config.slowlorisHeadersMs,
+    config.slowlorisBodyMs,
+    config.slowlorisIdleMs,
+  ) + 1000;
+}
+
 const TARGETS_ENV_PREFIX = 'UPSTREAM_TARGETS_';
 
 function readInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {

@@ -10,6 +10,7 @@ import {
   DEFAULT_SLOWLORIS_IDLE_MS,
   DEFAULT_SLOWLORIS_TTFB_MS,
   loadConfig,
+  timeoutBackstopMs,
 } from './config.js';
 
 test('slowloris defaults are generous enough for the netem path', () => {
@@ -41,4 +42,19 @@ test('invalid threshold and enable values fail at startup', () => {
   assert.throws(() => loadConfig({ SLOWLORIS_HEADERS_MS: '7000000' }), /SLOWLORIS_HEADERS_MS/);
   assert.throws(() => loadConfig({ SLOWLORIS_IDLE_MS: 'abc' }), /SLOWLORIS_IDLE_MS/);
   assert.throws(() => loadConfig({ SLOWLORIS_ENABLED: 'maybe' }), /SLOWLORIS_ENABLED/);
+});
+
+test('timeout backstop stays above the longest watchdog threshold', () => {
+  assert.equal(timeoutBackstopMs(loadConfig({})), DEFAULT_SLOWLORIS_IDLE_MS + 1000);
+
+  // The idle threshold is not always the largest; the backstop must follow
+  // whichever one is, including with the watchdog disabled.
+  const config = loadConfig({
+    SLOWLORIS_ENABLED: 'false',
+    SLOWLORIS_TTFB_MS: '3000',
+    SLOWLORIS_HEADERS_MS: '4500',
+    SLOWLORIS_IDLE_MS: '2000',
+    SLOWLORIS_BODY_MS: '6000',
+  });
+  assert.equal(timeoutBackstopMs(config), 7000);
 });

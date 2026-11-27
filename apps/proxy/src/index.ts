@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import { loadConfig } from './config.js';
+import { loadConfig, timeoutBackstopMs } from './config.js';
 import { createFrameBus } from './bus/redis.js';
 import { toTcpMetadataEvent } from './bus/tcp-event.js';
 import { startCapture } from './l4/capture.js';
@@ -251,12 +251,13 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   });
 }
 
-// Node's built-in timeouts are total-time limits, not progress-based, and a
-// silent close gives no reason to log. Disable them so the A4 watchdog is the
-// single authority for slow clients; requestTimeout was already disabled.
-server.headersTimeout = 0;
-server.requestTimeout = 0;
-server.keepAliveTimeout = 0;
+// The watchdog fires first and reports a reason, but Node's timeouts are a
+// backstop rather than being switched off: with SLOWLORIS_ENABLED=false there
+// would otherwise be no protection for a client that never sends a byte.
+const backstopMs = timeoutBackstopMs(config);
+server.headersTimeout = backstopMs;
+server.requestTimeout = backstopMs;
+server.keepAliveTimeout = backstopMs;
 
 server.listen(config.port, config.host, () => {
   const groups = [...pools.values()]
