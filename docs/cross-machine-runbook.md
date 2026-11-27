@@ -40,8 +40,14 @@ On Laptop A only:
 
 ```bash
 SUDO=1 ./up.sh --remote          # full run: Tailscale bindings + netem wan
+SUDO=1 ./up.sh --lan             # LAN bindings, no Tailscale needed
 ./up.sh --netem off              # local smoke without root
 ```
+
+You do not supply an IP for either mode. `--remote` detects the tailnet IP with
+`tailscale ip -4` and exits with a clear message if Tailscale is stopped;
+`--lan` detects the LAN IPv4 with `hostname -I`. The IP flags below are overrides
+only, for machines where auto-detection picks the wrong interface.
 
 `./up.sh` is the same command via `pnpm stack:up`. Flags:
 
@@ -56,8 +62,10 @@ Tailscale URL you should actually open.
 
 | Flag | Meaning |
 | ---- | ------- |
-| `--remote` | Publish proxy and dashboard on the Tailscale IP instead of loopback |
-| `--tailscale-ip <ip>` | Use this IP instead of `tailscale ip -4` |
+| `--remote` | Publish proxy and dashboard on the detected Tailscale IP instead of loopback |
+| `--lan` | Publish proxy and dashboard on all interfaces (`0.0.0.0`) for a LAN run |
+| `--lan-ip <ip>` | Override the LAN IP printed in the summary and dashboard UI |
+| `--tailscale-ip <ip>` | Override `tailscale ip -4` detection |
 | `--netem <wan\|mild\|fast\|lossy\|off>` | Profile for `tools/netem-up.sh`; `off` skips it |
 | `--iface <name>` | Physical NIC for capture and netem (default `CAPTURE_IFACE`) |
 | `--no-capture-check` | Skip the NIC traffic sanity check |
@@ -70,7 +78,8 @@ The harness checks, in order:
 2. `tools/capture-check.sh` — if it sees zero packets that is a **warning**, not
    a failure: there is no generator traffic until you start Laptop B. A 5 s
    timeout is reported as "no traffic yet".
-3. `docker compose up -d --wait` — waits on the real container healthchecks.
+3. `docker compose up -d --wait --scale stub=3` — three stub replicas by
+   default, publishing host ports 3001-3003 and round-robinned by the proxy.
    Build manually before running the harness; `./up.sh` deliberately does not
    rebuild images.
 4. Host-side HTTP checks: `GET /health` on the proxy and `GET /api/time` on the
@@ -85,6 +94,20 @@ Every step prints `STEP <name>: <command>` and either `OK <name>` or
 `FAILED <name>: <exit code and last output lines>`. Nothing hides which check
 failed or how it was checked. If anything after `compose up` starts fails, the
 harness tears down the partial stack automatically and reports that rollback too.
+
+### Why capture-check runs before the stack
+
+`tools/capture-check.sh` passively listens on the host NIC for 5 s with
+`tshark`. It is a diagnostic, not a gate: it distinguishes "this interface sees
+no packets" from "the parser is broken". Zero packets is printed as a warning
+because the generator on Laptop B has not started yet. It does not touch the
+proxy or the network.
+
+The proxy itself no longer worries about the host interface. Compose clears
+`CAPTURE_IFACE` inside the container, so capture starts disabled with one
+informational line instead of a `wlp0s20f3: No such device` error. The dashboard
+logs the address it actually bound (`http://0.0.0.0:3000`) rather than a
+hardcoded `127.0.0.1`, and its service cards show the public Tailscale/LAN URL.
 
 ### Two facts about the qdisc
 
