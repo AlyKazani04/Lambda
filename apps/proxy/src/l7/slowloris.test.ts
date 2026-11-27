@@ -172,10 +172,11 @@ test('associated trace and path travel with the event', () => {
   assert.equal(h.events[0]?.path, '/api/slow');
 });
 
-test('close clears every timer without emitting', () => {
+test('close clears every timer and destroys sockets without emitting', () => {
   const h = harness();
   request(h);
   h.watchdog.close();
+  assert.equal(h.socket.destroyed, true);
   h.clock.advance(10_000);
   assert.equal(h.events.length, 0);
 });

@@ -162,7 +162,13 @@ export function createSlowlorisWatchdog(options: SlowlorisOptions): SlowlorisWat
     },
 
     close(): void {
-      for (const state of [...connections.values()]) dispose(state);
+      // Timers alone are not enough: a keep-alive socket can outlive this
+      // watchdog and hold server.close() open on SIGTERM. Dispose first so the
+      // socket's 'close' listener is a no-op, then destroy the socket.
+      for (const state of [...connections.values()]) {
+        dispose(state);
+        state.socket.destroy();
+      }
     },
   };
 }
