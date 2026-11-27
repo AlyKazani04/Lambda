@@ -27,6 +27,13 @@ export interface ProxyConfig {
   redisUrl: string;
   /** Capped history list length. */
   historyLimit: number;
+
+  /** A4: progress-based idle detection, all thresholds in milliseconds. */
+  slowlorisEnabled: boolean;
+  slowlorisTtfbMs: number;
+  slowlorisHeadersMs: number;
+  slowlorisBodyMs: number;
+  slowlorisIdleMs: number;
 }
 
 export const DEFAULT_ROUTES: readonly Route[] = [
@@ -40,6 +47,24 @@ export const DEFAULT_UPSTREAM_PORT = 3001;
 export const DEFAULT_INSTANCE_COUNT = 3;
 export const DEFAULT_DISCOVERY_INTERVAL_MS = 5000;
 export const DEFAULT_REDIS_URL = 'redis://127.0.0.1:6379';
+export const DEFAULT_SLOWLORIS_TTFB_MS = 10_000;
+export const DEFAULT_SLOWLORIS_HEADERS_MS = 15_000;
+export const DEFAULT_SLOWLORIS_BODY_MS = 30_000;
+export const DEFAULT_SLOWLORIS_IDLE_MS = 60_000;
+
+// Node's own timeouts are total-time limits and give no reason when they fire,
+// so the A4 watchdog remains the reporting authority. It must not be the only
+// protection though: when it is disabled, or if its timer never runs, a client
+// could otherwise hold a socket forever. A ceiling just above the longest
+// watchdog threshold covers both cases while letting the watchdog fire first.
+export function timeoutBackstopMs(config: ProxyConfig): number {
+  return Math.max(
+    config.slowlorisTtfbMs,
+    config.slowlorisHeadersMs,
+    config.slowlorisBodyMs,
+    config.slowlorisIdleMs,
+  ) + 1000;
+}
 
 const TARGETS_ENV_PREFIX = 'UPSTREAM_TARGETS_';
 
@@ -67,6 +92,29 @@ function readNonNegativeInt(
     throw new Error(`${name} must be a non-negative integer, got ${JSON.stringify(raw)}`);
   }
   return value;
+}
+
+// Millisecond thresholds can exceed readInt's 65535 ceiling (ports), so they
+// need their own parser. Upper bound is one hour: beyond that the detector is
+// effectively disabled and a typo should be caught rather than silently
+// accepted.
+function readTimeoutMs(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0 || value > 3_600_000) {
+    throw new Error(`${name} must be an integer number of milliseconds in 1..3600000, got ${JSON.stringify(raw)}`);
+  }
+  return value;
+}
+
+function readEnabled(env: NodeJS.ProcessEnv, name: string): boolean {
+  const raw = env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return true;
+  if (raw === 'false' || raw === '0' || raw === 'no' || raw === 'off') return false;
+  if (raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on') return true;
+  throw new Error(`${name} must be true or false, got ${JSON.stringify(env[name])}`);
 }
 
 export function normalizePrefix(prefix: string): string {
@@ -158,5 +206,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     ),
     redisUrl: env.REDIS_URL ?? DEFAULT_REDIS_URL,
     historyLimit: readInt(env, 'HISTORY_LIMIT', DEFAULT_HISTORY_LIMIT),
+    slowlorisEnabled: readEnabled(env, 'SLOWLORIS_ENABLED'),
+    slowlorisTtfbMs: readTimeoutMs(env, 'SLOWLORIS_TTFB_MS', DEFAULT_SLOWLORIS_TTFB_MS),
+    slowlorisHeadersMs: readTimeoutMs(env, 'SLOWLORIS_HEADERS_MS', DEFAULT_SLOWLORIS_HEADERS_MS),
+    slowlorisBodyMs: readTimeoutMs(env, 'SLOWLORIS_BODY_MS', DEFAULT_SLOWLORIS_BODY_MS),
+    slowlorisIdleMs: readTimeoutMs(env, 'SLOWLORIS_IDLE_MS', DEFAULT_SLOWLORIS_IDLE_MS),
   };
 }

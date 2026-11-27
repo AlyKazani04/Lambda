@@ -11,8 +11,11 @@ import {
   RTT_HISTORY_KEY,
   RETRANSMIT_CHANNEL,
   RETRANSMIT_HISTORY_KEY,
+  SLOWLORIS_CHANNEL,
+  SLOWLORIS_HISTORY_KEY,
   type FrameEvent,
   type RetransmitEvent,
+  type SlowlorisEvent,
   type RttEstimateEvent,
   type TcpMetadataEvent,
   type TcpStateEvent,
@@ -29,6 +32,7 @@ export interface FrameBus {
   publishTcpState(event: TcpStateEvent): void;
   publishRtt(event: RttEstimateEvent): void;
   publishRetransmit(event: RetransmitEvent): void;
+  publishSlowloris(event: SlowlorisEvent): void;
   ready(): Promise<void>;
   close(): Promise<void>;
 }
@@ -70,6 +74,7 @@ export function createFrameBus(config: BusConfig): FrameBus {
     publishTcpState: (event) => publish(TCP_STATE_CHANNEL, TCP_STATE_HISTORY_KEY, event),
     publishRtt: (event) => publish(RTT_CHANNEL, RTT_HISTORY_KEY, event),
     publishRetransmit: (event) => publish(RETRANSMIT_CHANNEL, RETRANSMIT_HISTORY_KEY, event),
+    publishSlowloris: (event) => publish(SLOWLORIS_CHANNEL, SLOWLORIS_HISTORY_KEY, event),
     ready,
     close: async () => {
       await Promise.allSettled([...pending]);
