@@ -1,0 +1,35 @@
+# Dev overlay for watch mode. Use explicitly:
+#   docker compose -f docker-compose.yml -f compose.dev.yml up --build
+# Never rename this to compose.override.yml: that file is auto-loaded by every
+# compose command, including the CI smoke test's fixed port mappings.
+services:
+  proxy:
+    # Build under a distinct tag so a later plain `docker compose up -d` still
+    # uses the production image. Reusing lambda/proxy:dev would leave the tsx
+    # watch target running under that tag after the overlay comes down.
+    image: lambda/proxy:local-dev
+    build:
+      context: .
+      dockerfile: apps/proxy/Dockerfile
+      target: dev
+    working_dir: /repo/apps/proxy
+    command: ["./node_modules/.bin/tsx", "watch", "src/index.ts"]
+    volumes:
+      # Mount source only. node_modules and shared-types/dist stay image-owned.
+      - ./apps/proxy/src:/repo/apps/proxy/src
+
+  stub:
+    # Same tagging rationale as proxy above.
+    image: lambda/stub:local-dev
+    build:
+      context: .
+      dockerfile: apps/stub/Dockerfile
+      target: dev
+    working_dir: /repo/apps/stub
+    command: ["./node_modules/.bin/tsx", "watch", "src/index.ts"]
+    volumes:
+      - ./apps/stub/src:/repo/apps/stub/src
+
+  # dashboard is deliberately unchanged. server.ts runs next({ dev }) behind
+  # its own WebSocket upgrade handler; next dev cannot coexist with that
+  # handler (chunk 404s and a destroyed HMR socket), so it stays production.
