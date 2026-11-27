@@ -191,6 +191,10 @@ idle time and bytes received, and a `slowloris` event is published through the
 Redis bus. The dashboard's **Slowloris** view shows those events; `traceId` and
 `path` are attached only when the request reached route matching.
 
+`bytesReceived` is per phase, not per connection: `enterPhase` resets the
+counter, so a client that sends a header and then stalls reports a small byte
+count even though it has already sent data.
+
 Thresholds are environment settings, not constants: `SLOWLORIS_ENABLED`,
 `SLOWLORIS_TTFB_MS`, `SLOWLORIS_HEADERS_MS`, `SLOWLORIS_BODY_MS` and
 `SLOWLORIS_IDLE_MS` (defaults 10 s / 15 s / 30 s / 60 s). Shorten them for a
