@@ -375,7 +375,7 @@ test('detectLanIp picks a private LAN address and skips virtual interfaces', () 
   const ip = detectLanIp({
     lo: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
     docker0: [{ family: 'IPv4', address: '172.17.0.1', internal: false }],
-    tailscale0: [{ family: 'IPv4', address: '100.121.185.53', internal: false }],
+    tailscale0: [{ family: 'IPv4', address: '100.64.0.1', internal: false }],
     wlp0s20f3: [{ family: 'IPv4', address: '192.168.1.6', internal: false }],
   });
   assert.equal(ip, '192.168.1.6');
