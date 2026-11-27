@@ -346,3 +346,25 @@ test('up rolls back a partial stack when compose-up fails', async () => {
   assert.ok(deps.calls.some((call) => call.includes('netem-down.sh')));
   assert.ok(deps.calls.some((call) => call.includes('down -v --remove-orphans')));
 });
+
+test('findPortConflicts treats a wildcard binding as a wildcard conflict', () => {
+  const listeners = parseListeners('LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*');
+  const conflicts = findPortConflicts(listeners, [{ host: '0.0.0.0', port: 8080 }]);
+  assert.equal(conflicts.length, 1);
+  assert.match(conflicts[0].listener, /127\.0\.0\.1:8080/u);
+});
+
+test('parseArgs rejects unknown flags', () => {
+  assert.throws(
+    () => parseArgs(['up', '--lanip', '192.168.1.5'], {}),
+    /unknown flag --lanip/u,
+  );
+});
+
+test('down skips all tc calls when netem is off', async () => {
+  const deps = makeDeps();
+  await down({ ...parseArgs(['down'], {}), netemProfile: 'off' }, deps);
+  assert.ok(!deps.calls.some((call) => call.includes('netem-down.sh')));
+  assert.ok(!deps.calls.some((call) => call.includes('qdisc show')));
+  assert.ok(deps.calls.some((call) => call.includes('down -v --remove-orphans')));
+});

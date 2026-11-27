@@ -58,6 +58,20 @@ export function parseArgs(argv, env = process.env) {
   };
   const has = (name) => rest.includes(`--${name}`);
 
+  const valueFlags = new Set(['lan-ip', 'tailscale-ip', 'netem', 'iface']);
+  const booleanFlags = new Set(['remote', 'lan', 'no-capture-check', 'help']);
+  for (let index = 0; index < rest.length; index += 1) {
+    const token = rest[index];
+    if (!token.startsWith('--')) continue;
+    const name = token.slice(2);
+    if (booleanFlags.has(name)) continue;
+    if (valueFlags.has(name)) {
+      index += 1;
+      continue;
+    }
+    throw new UsageError(`unknown flag --${name}`);
+  }
+
   if (command === '--help' || command === '-h' || has('help')) {
     return { help: true };
   }
@@ -180,7 +194,9 @@ export function findPortConflicts(listeners, bindings) {
   for (const binding of bindings) {
     for (const listener of listeners) {
       if (listener.port !== binding.port) continue;
-      if (!wildcard.has(listener.address) && listener.address !== binding.host) continue;
+      const wildcardBinding = wildcard.has(binding.host);
+      const wildcardListener = wildcard.has(listener.address);
+      if (!wildcardBinding && !wildcardListener && listener.address !== binding.host) continue;
       conflicts.push({ ...binding, listener: listener.raw });
     }
   }
@@ -286,10 +302,6 @@ function preflight(options, deps) {
   }
 
   run(deps, options, 'docker-daemon', 'docker', ['info', '--format', '{{.ServerVersion}}']);
-  const [command, args] = composeCommand(options);
-  run(deps, options, 'compose-config', command, [...args, 'config', '--quiet'], {
-    env: composeEnv(options),
-  });
 
   if (options.remote && options.tailscaleIp === null) {
     const detected = deps.exec('tailscale', ['ip', '-4']);
@@ -314,6 +326,11 @@ function preflight(options, deps) {
     options.lanIp = ip;
     deps.log(`OK lan-ip: ${ip}`);
   }
+
+  const [command, args] = composeCommand(options);
+  run(deps, options, 'compose-config', command, [...args, 'config', '--quiet'], {
+    env: composeEnv(options),
+  });
 
   checkPorts(options, deps);
 
@@ -514,9 +531,8 @@ export async function down(options, deps = defaultDeps) {
   };
 
   attempt(() => {
-    if (options.netemProfile !== 'off') {
-      run(deps, options, 'netem-down', 'bash', ['tools/netem-down.sh', options.iface]);
-    }
+    if (options.netemProfile === 'off') return;
+    run(deps, options, 'netem-down', 'bash', ['tools/netem-down.sh', options.iface]);
     const shown = run(deps, options, 'qdisc-check', 'tc', ['qdisc', 'show', 'dev', options.iface]);
     if (/\bnetem\b/u.test(shown.stdout)) {
       throw new HarnessError(
