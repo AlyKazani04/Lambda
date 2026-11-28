@@ -14,6 +14,8 @@ import {
   RETRANSMIT_HISTORY_KEY,
   SLOWLORIS_CHANNEL,
   SLOWLORIS_HISTORY_KEY,
+  SNI_ROUTE_CHANNEL,
+  SNI_ROUTE_HISTORY_KEY,
 } from 'shared-types';
 
 import { getReader } from './redis.js';
@@ -55,7 +57,7 @@ export function createBridge(config: BridgeConfig): RedisBridge {
   });
 
   void subscriber
-    .subscribe(FRAME_CHANNEL, TCP_CHANNEL, TCP_STATE_CHANNEL, RTT_CHANNEL, RETRANSMIT_CHANNEL, SLOWLORIS_CHANNEL)
+    .subscribe(FRAME_CHANNEL, TCP_CHANNEL, TCP_STATE_CHANNEL, RTT_CHANNEL, RETRANSMIT_CHANNEL, SLOWLORIS_CHANNEL, SNI_ROUTE_CHANNEL)
     .catch(() => undefined);
 
   function parse(message: string): unknown {
@@ -105,6 +107,11 @@ export function createBridge(config: BridgeConfig): RedisBridge {
       for (const item of slowloris.reverse()) {
         if (ws.readyState !== WebSocket.OPEN) return;
         ws.send(JSON.stringify({ channel: SLOWLORIS_CHANNEL, payload: parse(item) }));
+      }
+      const sniRoutes = await reader.lrange(SNI_ROUTE_HISTORY_KEY, 0, backfillLimit - 1);
+      for (const item of sniRoutes.reverse()) {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ channel: SNI_ROUTE_CHANNEL, payload: parse(item) }));
       }
     } catch (err) {
       console.error(`backfill failed: ${err instanceof Error ? err.message : String(err)}`);

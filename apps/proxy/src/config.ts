@@ -12,6 +12,21 @@ export interface Route {
   group: string;
 }
 
+export type TlsMode = 'decrypt' | 'passthrough';
+
+export interface TlsHostRoute {
+  /** Lowercased SNI hostname, matched exactly. */
+  host: string;
+  mode: TlsMode;
+  /** Decrypt path: upstream group to route the plaintext request to. */
+  group?: string;
+  /** Decrypt path: per-host certificate, overriding the global pair. */
+  certFile?: string;
+  keyFile?: string;
+  /** Passthrough path: raw TLS upstream, e.g. 127.0.0.1:8444. */
+  target?: UpstreamTarget;
+}
+
 export interface ProxyConfig {
   host: string;
   port: number;
@@ -34,6 +49,15 @@ export interface ProxyConfig {
   slowlorisHeadersMs: number;
   slowlorisBodyMs: number;
   slowlorisIdleMs: number;
+
+  /** A8: TLS termination and SNI routing. Disabled by default. */
+  tlsEnabled: boolean;
+  tlsPort: number;
+  tlsCertFile: string;
+  tlsKeyFile: string;
+  tlsHosts: readonly TlsHostRoute[];
+  /** Frame logs include credential headers only when this is explicitly on. */
+  tlsLogSecrets: boolean;
 }
 
 export const DEFAULT_ROUTES: readonly Route[] = [
@@ -51,6 +75,13 @@ export const DEFAULT_SLOWLORIS_TTFB_MS = 10_000;
 export const DEFAULT_SLOWLORIS_HEADERS_MS = 15_000;
 export const DEFAULT_SLOWLORIS_BODY_MS = 30_000;
 export const DEFAULT_SLOWLORIS_IDLE_MS = 60_000;
+export const DEFAULT_TLS_PORT = 8443;
+
+// The default cert pair is only a fallback for hosts that do not name their
+// own files. Keeping the path in config rather than in code lets the same
+// compiled image use different certs on each machine.
+export const DEFAULT_TLS_CERT_FILE = '';
+export const DEFAULT_TLS_KEY_FILE = '';
 
 // Node's own timeouts are total-time limits and give no reason when they fire,
 // so the A4 watchdog remains the reporting authority. It must not be the only
@@ -109,12 +140,20 @@ function readTimeoutMs(env: NodeJS.ProcessEnv, name: string, fallback: number): 
   return value;
 }
 
-function readEnabled(env: NodeJS.ProcessEnv, name: string): boolean {
+function readEnabledWithDefault(
+  env: NodeJS.ProcessEnv,
+  name: string,
+  fallback: boolean,
+): boolean {
   const raw = env[name]?.trim().toLowerCase();
-  if (raw === undefined || raw === '') return true;
+  if (raw === undefined || raw === '') return fallback;
   if (raw === 'false' || raw === '0' || raw === 'no' || raw === 'off') return false;
   if (raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on') return true;
   throw new Error(`${name} must be true or false, got ${JSON.stringify(env[name])}`);
+}
+
+function readEnabled(env: NodeJS.ProcessEnv, name: string): boolean {
+  return readEnabledWithDefault(env, name, true);
 }
 
 export function normalizePrefix(prefix: string): string {
@@ -180,6 +219,90 @@ export function parseTargets(raw: string | undefined): readonly UpstreamTarget[]
     });
 }
 
+/**
+ * A8: one entry per SNI hostname. SNI is case-insensitive on the wire, so
+ * hostnames are normalised here and compared exactly at lookup time; wildcard
+ * matching is deliberately out of scope.
+ */
+export function parseTlsHosts(raw: string | undefined): readonly TlsHostRoute[] {
+  if (raw === undefined || raw.trim() === '') return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`TLS_SNI_ROUTES must be JSON, got ${JSON.stringify(raw)}`);
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('TLS_SNI_ROUTES must be a non-empty JSON array when set');
+  }
+
+  const seen = new Set<string>();
+  return parsed.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error(`TLS_SNI_ROUTES[${index}] must be an object`);
+    }
+    const { host, mode, group, certFile, keyFile, target } = entry as Record<string, unknown>;
+    if (typeof host !== 'string' || host.trim() === '') {
+      throw new Error(`TLS_SNI_ROUTES[${index}] needs a string host`);
+    }
+    const hostname = host.trim().toLowerCase();
+    if (seen.has(hostname)) {
+      throw new Error(`TLS_SNI_ROUTES has a duplicate host: ${hostname}`);
+    }
+    seen.add(hostname);
+
+    if (mode !== 'decrypt' && mode !== 'passthrough') {
+      throw new Error(`TLS_SNI_ROUTES[${index}].mode must be decrypt or passthrough`);
+    }
+
+    const optionalString = (value: unknown, field: string): string | undefined => {
+      if (value === undefined) return undefined;
+      if (typeof value !== 'string' || value.trim() === '') {
+        throw new Error(`TLS_SNI_ROUTES[${index}].${field} must be a non-empty string`);
+      }
+      return value.trim();
+    };
+
+    if (mode === 'decrypt') {
+      if (typeof group !== 'string' || group.trim() === '') {
+        throw new Error(`TLS_SNI_ROUTES[${index}] decrypt needs a group`);
+      }
+      return {
+        host: hostname,
+        mode,
+        group: group.trim(),
+        ...(certFile === undefined ? {} : { certFile: optionalString(certFile, 'certFile') }),
+        ...(keyFile === undefined ? {} : { keyFile: optionalString(keyFile, 'keyFile') }),
+      };
+    }
+
+    if (typeof target !== 'string' || target.trim() === '') {
+      throw new Error(`TLS_SNI_ROUTES[${index}] passthrough needs a host:port target`);
+    }
+    const targets = parseTargets(target);
+    if (targets.length !== 1) {
+      throw new Error(`TLS_SNI_ROUTES[${index}].target must be exactly one host:port`);
+    }
+    return { host: hostname, mode, target: targets[0] };
+  });
+}
+
+/** Fail fast on missing key material rather than at the first handshake. */
+export function validateTlsConfig(config: ProxyConfig): void {
+  if (!config.tlsEnabled) return;
+  if (config.tlsHosts.length === 0) {
+    throw new Error('TLS_ENABLED requires at least one TLS_SNI_ROUTES host');
+  }
+  for (const host of config.tlsHosts) {
+    if (host.mode !== 'decrypt') continue;
+    if ((host.certFile ?? config.tlsCertFile) === '' || (host.keyFile ?? config.tlsKeyFile) === '') {
+      throw new Error(`TLS certificate and key are required for ${host.host}`);
+    }
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
   const routes = parseRoutes(env.ROUTES);
 
@@ -190,7 +313,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     explicitTargets.set(group, override.length > 0 ? override : sharedTargets);
   }
 
-  return {
+  const config: ProxyConfig = {
     host: env.PROXY_HOST ?? '0.0.0.0',
     port: readInt(env, 'PROXY_PORT', DEFAULT_PROXY_PORT),
     routes,
@@ -211,5 +334,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ProxyConfig {
     slowlorisHeadersMs: readTimeoutMs(env, 'SLOWLORIS_HEADERS_MS', DEFAULT_SLOWLORIS_HEADERS_MS),
     slowlorisBodyMs: readTimeoutMs(env, 'SLOWLORIS_BODY_MS', DEFAULT_SLOWLORIS_BODY_MS),
     slowlorisIdleMs: readTimeoutMs(env, 'SLOWLORIS_IDLE_MS', DEFAULT_SLOWLORIS_IDLE_MS),
+    tlsEnabled: readEnabledWithDefault(env, 'TLS_ENABLED', false),
+    tlsPort: readInt(env, 'TLS_PORT', DEFAULT_TLS_PORT),
+    tlsCertFile: env.TLS_CERT_FILE?.trim() ?? DEFAULT_TLS_CERT_FILE,
+    tlsKeyFile: env.TLS_KEY_FILE?.trim() ?? DEFAULT_TLS_KEY_FILE,
+    tlsHosts: parseTlsHosts(env.TLS_SNI_ROUTES),
+    tlsLogSecrets: readEnabledWithDefault(env, 'TLS_LOG_SECRETS', false),
   };
+
+  validateTlsConfig(config);
+  return config;
 }

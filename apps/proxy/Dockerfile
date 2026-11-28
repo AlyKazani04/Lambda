@@ -52,5 +52,5 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store,sharing=locked \
 COPY --from=builder --chown=node:node /repo/apps/proxy/dist ./apps/proxy/dist
 COPY --from=builder --chown=node:node /repo/packages/shared-types/dist ./packages/shared-types/dist
 USER node
-EXPOSE 8080
+EXPOSE 8080 8443
 CMD ["node", "apps/proxy/dist/index.js"]

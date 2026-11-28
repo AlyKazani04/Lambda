@@ -1,4 +1,4 @@
-import type { FrameEvent, RetransmitEvent, SlowlorisEvent, RttEstimateEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
+import type { FrameEvent, FrameTlsMode, RetransmitEvent, SlowlorisEvent, RttEstimateEvent, SniRouteEvent, TcpMetadataEvent, TcpStateEvent } from 'shared-types';
 
 /**
  * WebSocket payloads cross the wire as JSON and may come from a proxy running
@@ -47,6 +47,43 @@ export function parseFrameEvent(payload: unknown): FrameEvent | null {
     timestamp: isFiniteNumber(payload['timestamp']) ? payload['timestamp'] : 0,
     group: hasString(payload, 'group') ? (payload['group'] as string) : undefined,
     upstream: hasString(payload, 'upstream') ? (payload['upstream'] as string) : undefined,
+    tlsMode: isTlsMode(payload['tlsMode']) ? payload['tlsMode'] : undefined,
+    sni: hasString(payload, 'sni') ? (payload['sni'] as string) : undefined,
+    headers: parseHeaders(payload['headers']),
+  };
+}
+
+function isTlsMode(value: unknown): value is FrameTlsMode {
+  return value === 'decrypt' || value === 'passthrough';
+}
+
+function parseHeaders(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const headers: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(value)) {
+    if (typeof headerValue !== 'string') continue;
+    headers[name] = headerValue;
+  }
+  return headers;
+}
+
+export function parseSniRouteEvent(payload: unknown): SniRouteEvent | null {
+  if (!isRecord(payload)) return null;
+  if (
+    !hasString(payload, 'host') ||
+    !isTlsMode(payload['mode']) ||
+    !hasString(payload, 'upstream') ||
+    !isFiniteNumber(payload['requestBytes']) ||
+    !isFiniteNumber(payload['timestamp'])
+  ) {
+    return null;
+  }
+  return {
+    host: payload['host'] as string,
+    mode: payload['mode'],
+    upstream: payload['upstream'] as string,
+    requestBytes: payload['requestBytes'] as number,
+    timestamp: payload['timestamp'] as number,
   };
 }
 
