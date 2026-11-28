@@ -18,6 +18,8 @@ import { createPools, startDiscovery } from './upstream.js';
 import { resolveTraceId } from './correlation/trace-id.js';
 import { createFrameRecorder } from './l7/frame-logger.js';
 import { createSlowlorisWatchdog } from './l7/slowloris.js';
+import { createTlsGateway } from './l7/gateway.js';
+import type { DecryptedRequestContext } from './l7/gateway.js';
 
 const config = loadConfig();
 const bus = createFrameBus({ url: config.redisUrl, historyLimit: config.historyLimit });
@@ -138,6 +140,8 @@ function handleHealth(res: ServerResponse): void {
 
 interface RequestOptions {
   expectContinue?: boolean;
+  /** A8: set by the TLS gateway for a decrypted client-facing leg. */
+  tls?: DecryptedRequestContext;
 }
 
 function handleRequest(
@@ -164,7 +168,11 @@ function handleRequest(
     return;
   }
 
-  const route = matchRoute(pathname, config.routes);
+  // On the TLS path SNI has already chosen the upstream group. Path routing
+  // still runs for plaintext, and the decrypted path remains in the frame log.
+  const route = options.tls === undefined
+    ? matchRoute(pathname, config.routes)
+    : { prefix: '*', group: options.tls.group };
   if (route === null) {
     sendJson(res, 404, { error: 'not_found', path: pathname });
     return;
@@ -202,6 +210,12 @@ function handleRequest(
     path: req.url ?? '/',
     group: route.group,
     upstream: instance.id,
+    ...(options.tls === undefined ? {} : {
+      tlsMode: 'decrypt' as const,
+      sni: options.tls.sni,
+      headers: req.headers,
+      logSecrets: options.tls.logSecrets,
+    }),
   });
 
   forward(req, res, instance, {
@@ -236,6 +250,30 @@ server.on('checkContinue', (req, res) => {
   handleRequest(req, res, { expectContinue: true });
 });
 
+// A8: the TLS gateway feeds decrypted requests into handleRequest, so TLS and
+// plaintext share the router, trace IDs, watchdog and frame recorder.
+const tlsGateway = config.tlsEnabled
+  ? createTlsGateway({
+    config,
+    bus,
+    onSecureConnection: (socket) => slowloris.observeConnection(socket),
+    onDecryptedRequest: (req, res, context) => {
+      slowloris.onRequest(req, res);
+      handleRequest(req, res, { tls: context });
+    },
+  })
+  : null;
+
+if (tlsGateway !== null) {
+  void tlsGateway.listen().then(
+    (port) => console.log(`TLS gateway listening on ${config.host}:${port}`),
+    (error: unknown) => {
+      console.error(`TLS gateway failed to start: ${String(error)}`);
+      process.exitCode = 1;
+    },
+  );
+}
+
 // Discovery runs on a timer; stop it explicitly so a SIGTERM leaves nothing behind.
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
@@ -243,6 +281,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     capture?.stop();
     handshake.close();
     slowloris.close();
+    void tlsGateway?.close();
     clearInterval(stateSweep);
     clearInterval(rttSweep);
     clearInterval(retransmitSweep);
