@@ -17,6 +17,9 @@ export default function Frames({ frames }: { frames: FrameEvent[] }) {
             <th>req/resp bytes</th>
             <th>duration</th>
             <th>internal</th>
+            <th>tls</th>
+            <th>sni</th>
+            <th>headers</th>
           </tr>
         </thead>
         <tbody>
@@ -32,6 +35,20 @@ export default function Frames({ frames }: { frames: FrameEvent[] }) {
               </td>
               <td>{frame.durationMs.toFixed(1)} ms</td>
               <td>{frame.internalMs.toFixed(2)} ms</td>
+              <td>{frame.tlsMode ?? '-'}</td>
+              <td>{frame.sni ?? '-'}</td>
+              <td>
+                {frame.headers === undefined ? '-' : (
+                  <details>
+                    <summary>{Object.keys(frame.headers).length}</summary>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                      {Object.entries(frame.headers)
+                        .map(([name, value]) => `${name}: ${value}`)
+                        .join('\n')}
+                    </pre>
+                  </details>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
