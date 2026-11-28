@@ -115,6 +115,41 @@ test('counts streamed bytes and ignores repeated finish calls', () => {
   assert.equal(h.bus.frames[0]!.status, 201);
 });
 
+test('TLS frames carry the SNI hostname and redact credential headers by default', () => {
+  const h = harness();
+  const recorder = createFrameRecorder(h.req, {
+    ...options(h.bus, () => h.clock.value),
+    tlsMode: 'decrypt',
+    sni: 'secure.example',
+    headers: {
+      host: 'secure.example',
+      authorization: 'Bearer demo-token',
+      cookie: 'session=abc',
+    },
+  });
+  recorder.finish(200);
+
+  const frame = h.bus.frames[0]!;
+  assert.equal(frame.tlsMode, 'decrypt');
+  assert.equal(frame.sni, 'secure.example');
+  assert.equal(frame.headers?.['host'], 'secure.example');
+  assert.equal(frame.headers?.['authorization'], '[REDACTED]');
+  assert.equal(frame.headers?.['cookie'], '[REDACTED]');
+});
+
+test('an opt-in records credential headers in full', () => {
+  const h = harness();
+  const recorder = createFrameRecorder(h.req, {
+    ...options(h.bus, () => h.clock.value),
+    tlsMode: 'decrypt',
+    headers: { authorization: 'Bearer demo-token' },
+    logSecrets: true,
+  });
+  recorder.finish(200);
+
+  assert.equal(h.bus.frames[0]!.headers?.['authorization'], 'Bearer demo-token');
+});
+
 test('an upstream error before any response logs a real status and no double-counted internal time', () => {
   const h = harness();
   const recorder = createFrameRecorder(h.req, options(h.bus, () => h.clock.value));
