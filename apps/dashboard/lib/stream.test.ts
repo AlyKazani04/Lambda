@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseFrameEvent, parseRetransmitEvent, parseRttEvent, parseSlowlorisEvent, parseTcpEvent } from './stream.js';
+import { parseFrameEvent, parseRetransmitEvent, parseRttEvent, parseSlowlorisEvent, parseSniRouteEvent, parseTcpEvent } from './stream.js';
 
 const frame = {
   traceId: 'abc',
@@ -32,7 +32,14 @@ const tcp = {
 };
 
 test('accepts well-formed frames and TCP events', () => {
-  assert.deepEqual(parseFrameEvent(frame), { ...frame, group: undefined, upstream: undefined });
+  assert.deepEqual(parseFrameEvent(frame), {
+    ...frame,
+    group: undefined,
+    upstream: undefined,
+    tlsMode: undefined,
+    sni: undefined,
+    headers: undefined,
+  });
   assert.deepEqual(parseTcpEvent(tcp), { ...tcp, options: undefined });
 });
 
@@ -43,6 +50,39 @@ test('rejects null, primitives and malformed shapes without throwing', () => {
   assert.equal(parseFrameEvent({ ...frame, traceId: 42 }), null);
   assert.equal(parseTcpEvent({ ...tcp, window: 'large' }), null);
   assert.equal(parseTcpEvent({ ...tcp, src: null }), null);
+});
+
+test('preserves TLS mode, SNI and decrypted headers on a frame', () => {
+  const tlsFrame = {
+    ...frame,
+    tlsMode: 'decrypt',
+    sni: 'secure.example',
+    headers: { host: 'secure.example', authorization: '[REDACTED]' },
+  };
+  assert.deepEqual(parseFrameEvent(tlsFrame), {
+    ...tlsFrame,
+    group: undefined,
+    upstream: undefined,
+  });
+  assert.equal(parseFrameEvent({ ...frame, tlsMode: 'bogus' })?.tlsMode, undefined);
+  assert.equal(parseFrameEvent({ ...frame, headers: { host: 42 } })?.headers?.['host'], undefined);
+});
+
+const sniRoute = {
+  host: 'tunnel.example',
+  mode: 'passthrough',
+  upstream: '127.0.0.1:8444',
+  requestBytes: 312,
+  timestamp: 1_700_000_000_000,
+};
+
+test('accepts SNI route events and rejects malformed ones', () => {
+  assert.deepEqual(parseSniRouteEvent(sniRoute), sniRoute);
+  assert.equal(parseSniRouteEvent(null), null);
+  assert.equal(parseSniRouteEvent({ ...sniRoute, mode: 'decrypt' })?.mode, 'decrypt');
+  assert.equal(parseSniRouteEvent({ ...sniRoute, mode: 'bogus' }), null);
+  assert.equal(parseSniRouteEvent({ ...sniRoute, requestBytes: '312' }), null);
+  assert.equal(parseSniRouteEvent({ ...sniRoute, upstream: undefined }), null);
 });
 
 const rtt = {
