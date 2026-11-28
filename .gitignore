@@ -31,4 +31,10 @@ coverage/
 .idea/
 *.swp
 
+# A8: certificate key material is local-only. A committed private key is a
+# real incident, so ignore PEM/key files everywhere, including certs/.
+certs/
+*.pem
+*.key
+
 /**/*/PLAN.md
