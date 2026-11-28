@@ -27,6 +27,7 @@ Design choices: TLS is off by default, listens on 8443, advertises `http/1.1` vi
 | Cert script syntax | `bash -n tools/generate-certs.sh` | exit 0 |
 | Key material ignored | `git check-ignore -v certs/secure.example-key.pem` | `.gitignore:36:certs/` |
 | Wire-level TLS | `cd apps/proxy && node --import tsx ../../tools/tls-verify.ts` | `A8 VERIFIED: decrypt + SNI frame, raw passthrough, no decrypted passthrough frame` |
+| Plaintext alongside TLS | built proxy with `TLS_ENABLED=true`, then `curl http://127.0.0.1:18080/api/plain-check` | `status=200 body=PLAIN-OK /api/plain-check` |
 
 The wire harness starts a plaintext upstream and a separate TLS origin, sends real HTTPS requests through the gateway with certificate verification on, and asserts:
 
